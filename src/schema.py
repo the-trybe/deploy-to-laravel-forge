@@ -1,5 +1,6 @@
 schema = {
-    "server_name": {"type": "string", "required": True},
+    "organization": {"type": "string", "required": True},
+    "server": {"type": "string", "required": True},
     "github_repository": {"type": "string", "required": True},
     "github_branch": {"type": "string", "required": False, "default": "main"},
     "sites": {
@@ -7,7 +8,16 @@ schema = {
         "schema": {
             "type": "dict",
             "schema": {
-                "site_domain": {"type": "string", "required": True},
+                "domain_mode": {
+                    "type": "string",
+                    "required": False,
+                    "default": "on-forge",
+                    "allowed": [
+                        "on-forge",
+                        "custom",
+                    ],
+                },
+                "name": {"type": "string", "required": True},
                 "github_branch": {
                     "type": "string",
                     "required": False,
@@ -21,7 +31,19 @@ schema = {
                 "project_type": {
                     "type": "string",
                     "required": False,
-                    "default": "html",
+                    "default": "other",
+                    "allowed": [
+                        "laravel",
+                        "symfony",
+                        "statamic",
+                        "wordpress",
+                        "phpmyadmin",
+                        "php",
+                        "next.js",
+                        "nuxt.js",
+                        "static-html",
+                        "other",
+                    ],
                 },
                 "php_version": {"type": "string", "required": False},
                 "deployment_commands": {
@@ -55,6 +77,16 @@ schema = {
                     "type": "boolean",
                     "required": False,
                     "default": False,
+                },
+                "website_isolation": {
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                    "isolation_user_required": True,
+                },
+                "isolation_user": {
+                    "type": "string",
+                    "required": False,
                 },
                 "clone_repository": {
                     "type": "boolean",

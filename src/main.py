@@ -26,7 +26,9 @@ load_dotenv()
 DEBUG = (
     os.getenv("DEBUG", "false").lower() == "true" or os.getenv("RUNNER_DEBUG") == "1"
 )
-WORKFLOW_REPO_PATH = os.getenv("GITHUB_WORKSPACE", "./")
+SOURCE_REPO_PATH = os.getenv(
+    "GITHUB_WORKSPACE", "./"
+)  # represents the path to the repository that triggered the GitHub Action
 DEPLOYMENT_FILE_NAME = os.getenv("DEPLOYMENT_FILE", "forge-deploy.yml")
 FORGE_API_TOKEN = os.getenv("FORGE_API_TOKEN")
 SECRETS_ENV = os.getenv("SECRETS", None)
@@ -43,18 +45,18 @@ def main():
     action_dir = cat_paths(
         os.path.dirname(__file__), "../"
     )  # path of the action directory (parent directory of this file)
-    forge_uri = "https://forge.laravel.com/api/v1"
+    forge_uri = "https://forge.laravel.com/api"
     if FORGE_API_TOKEN is None or FORGE_API_TOKEN == "":
         raise Exception("FORGE_API_TOKEN is not set")
 
-    dep_file = cat_paths(WORKFLOW_REPO_PATH, DEPLOYMENT_FILE_NAME)
+    dep_file_path = cat_paths(SOURCE_REPO_PATH, DEPLOYMENT_FILE_NAME)
 
     try:
-        with open(dep_file, "r") as file:
+        with open(dep_file_path, "r") as file:
             data = yaml.safe_load(file)
             logger.debug("YAML data: %s", data)
     except FileNotFoundError as e:
-        raise Exception(f"The configuration file {dep_file} is missing.") from e
+        raise Exception(f"The configuration file {dep_file_path} is missing.") from e
     except yaml.YAMLError as e:
         raise Exception(f"Error parsing YAML file: {e}") from e
 
@@ -68,70 +70,41 @@ def main():
         except Exception as e:
             raise Exception(f"Error replacing secrets: {e}") from e
 
-    validate_yaml_data(data)
+    config = validate_yaml_data(data)
 
-    config = load_config(data)
+    forge_api = ForgeApi(config["organization"])
 
-    # ------- this block is commented bcs it can leak secrets, if set in places other that environment (ex: in dep script) :)
-    # hide env to log config safely
-    # log_config = copy.deepcopy(config)
-    # for site in log_config["sites"]:
-    #     site["environment"] = "*****"
-    # logger.debug("Config: %s", log_config)
+    server = forge_api.get_server_by_name(config["server"])
+    server_id = server.get("id", None)
 
-    session = requests.sessions.Session()
-    session.headers.update(
-        {
-            "Authorization": f"Bearer {FORGE_API_TOKEN}",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-    )
-
-    forge_api = ForgeApi(session)
-
-    try:
-        response = session.get(f"{forge_uri}/servers")
-        response.raise_for_status()
-    except requests.RequestException as e:
-        raise Exception("Failed to get server from Laravel Forge API") from e
-
-    server_id = next(
-        (
-            server["id"]
-            for server in response.json()["servers"]
-            if server["name"] == config["server_name"]
-        ),
-        None,
-    )
     if not server_id:
-        raise Exception(f"Server `{config["server_name"]}` not found")
+        raise Exception(f"Server `{config["server"]}` not found")
 
     # sites
-    sites = forge_api.get_all_sites(server_id)
+    server_sites = forge_api.get_all_sites(server_id)
 
     for site_conf in config["sites"]:
         print("\n")
-        logger.info(f"\t---- Site: {site_conf['site_domain']} ----")
+        logger.info(f"\t---- Site: {site_conf['name']} ----")
 
-        site = next(
-            (site for site in sites if site["name"] == site_conf["site_domain"]),
+        # TODO: test if the name includes the on forge domain
+        existing_site = next(
+            (
+                site
+                for site in server_sites
+                if site["attributes"]["name"] == site_conf["name"]
+            ),
             None,
         )
 
         # create site
-        if not site:
+        if not existing_site:
             # nginx template
 
-            nginx_templates = forge_api.get_nginx_templates(server_id)
-            nginx_template_id = next(
-                (
-                    item["id"]
-                    for item in nginx_templates
-                    if item["name"] == site_conf["nginx_template"]
-                ),
-                None,
+            nginx_templates = forge_api.get_nginx_templates_by_name(
+                server_id, site_conf["nginx_template"]
             )
+            nginx_template_id = nginx_templates.get("id") if nginx_templates else None
 
             # if template isn't added in the server add it from nginx-templates folder
             nginx_template_path = cat_paths(
@@ -161,13 +134,16 @@ def main():
                         nginx_template_path,
                         "r",
                     ) as file:
-                        local_template = file.read()
+                        local_template_content = file.read()
 
-                    if server_template != local_template:
+                    if (
+                        server_template["attributes"]["content"]
+                        != local_template_content
+                    ):
                         try:
                             response = session.put(
                                 f"{forge_uri}/servers/{server_id}/nginx/templates/{nginx_template_id}",
-                                json={"content": local_template},
+                                json={"content": local_template_content},
                             )
                             response.raise_for_status()
                             logger.info("Nginx template updated successfully")
@@ -187,38 +163,40 @@ def main():
 
             # create site
             logger.info("Creating site...")
-            site = forge_api.create_site(server_id, create_site_payload)
+            existing_site = forge_api.create_site(server_id, create_site_payload)
 
             def until_site_installed(site):
                 site = forge_api.get_site_by_id(server_id, site["id"])
                 return site["status"] == "installed"
 
-            if not wait(lambda: until_site_installed(site)):
+            if not wait(lambda: until_site_installed(existing_site)):
                 raise Exception("Site creation timed out")
 
             logger.info("Site created successfully")
 
             # set site nginx variables
             try:
-                nginx_config = forge_api.get_nginx_config(server_id, site["id"])
+                nginx_config = forge_api.get_nginx_config(
+                    server_id, existing_site["id"]
+                )
                 nginx_config = replace_nginx_variables(
                     nginx_config, site_conf["nginx_template_variables"]
                 )
-                forge_api.set_nginx_config(server_id, site["id"], nginx_config)
+                forge_api.set_nginx_config(server_id, existing_site["id"], nginx_config)
             except Exception as e:
                 raise Exception(f"Failed to set nginx config variables: {e}") from e
 
         else:
             logger.info("Site already exists")
 
-        site_id = site["id"]
-        logger.debug(f"Site: %s", site)
+        site_id = existing_site["id"]
+        logger.debug(f"Site: %s", existing_site)
 
         # ---- update aliases ----
         try:
-            site_aliases = site["aliases"]
+            site_aliases = existing_site["aliases"]
             if set(site_aliases) != set(site_conf["aliases"]):
-                site = forge_api.update_site(
+                existing_site = forge_api.update_site(
                     server_id, site_id, aliases=site_conf["aliases"]
                 )
                 logger.info("Site aliases updated successfully.")
@@ -231,7 +209,7 @@ def main():
         try:
             if site_conf["nginx_custom_config"]:
                 nginx_custom_file_path = cat_paths(
-                    WORKFLOW_REPO_PATH, site_conf["nginx_custom_config"]
+                    SOURCE_REPO_PATH, site_conf["nginx_custom_config"]
                 )
                 with open(nginx_custom_file_path, "r") as file:
                     nginx_custom_content = file.read()
@@ -315,7 +293,7 @@ def main():
         # add repository
         if (
             site_conf["clone_repository"]
-            and site["repository"] != config["github_repository"]
+            and existing_site["repository"] != config["github_repository"]
         ):
             logger.info("Adding repository...")
             try:
@@ -331,7 +309,7 @@ def main():
                 )
                 response.raise_for_status()
 
-                site = response.json()["site"]
+                existing_site = response.json()["site"]
 
                 def until_repo_installed():
                     site = forge_api.get_site_by_id(server_id, site_id)
@@ -451,7 +429,7 @@ def main():
             site_env = {}
             # read env file
             if site_conf["env_file"]:
-                env_file_path = cat_paths(WORKFLOW_REPO_PATH, site_conf["env_file"])
+                env_file_path = cat_paths(SOURCE_REPO_PATH, site_conf["env_file"])
                 try:
                     with open(env_file_path, "r") as file:
                         logger.info(
@@ -532,7 +510,7 @@ def main():
                 f"{forge_uri}/servers/{server_id}/sites/{site_id}/deployment/deploy"
             )
             response.raise_for_status()
-            site = response.json()["site"]
+            existing_site = response.json()["site"]
 
             def until_site_deployed():
                 site = session.get(

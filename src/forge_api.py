@@ -6,9 +6,31 @@ from utils import format_php_version
 
 
 class ForgeApi:
-    def __init__(self, session):
-        self.session = session
-        self.forge_uri = "https://forge.laravel.com/api/v1"
+    def __init__(self, org):
+        self.forge_uri = f"https://forge.laravel.com/api/{org}"
+
+        self.session = requests.sessions.Session()
+        self.session.headers.update(
+            {
+                "Authorization": f"Bearer {FORGE_API_TOKEN}",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+            }
+        )
+
+    # --- Servers ---
+    def get_server_by_name(self, server_name):
+        try:
+            response = session.get(
+                f"{self.forge_uri}/servers?filter[name]={server_name}"
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise Exception("Failed to get server from Laravel Forge API") from e
+        servers = response.json()["data"]
+        if len(servers) == 0:
+            raise Exception(f"Server '{server_name}' not found in Laravel Forge")
+        return servers[0]
 
     # --- Sites ---
     def create_site(self, server_id, payload):
@@ -27,7 +49,7 @@ class ForgeApi:
         try:
             response = self.session.get(f"{self.forge_uri}/servers/{server_id}/sites")
             response.raise_for_status()
-            sites = response.json()["sites"]
+            sites = response.json()["data"]
             return sites
         except requests.RequestException as e:
             raise Exception("Failed to get sites from Laravel Forge API") from e
@@ -55,13 +77,16 @@ class ForgeApi:
 
     # --- nginx ---
 
-    def get_nginx_templates(self, server_id):
+    def get_nginx_templates_by_name(self, server_id, name) -> dict | None:
         try:
             response = self.session.get(
-                f"{self.forge_uri}/servers/{server_id}/nginx/templates"
+                f"{self.forge_uri}/servers/{server_id}/nginx/templates?filter[name]={name}"
             )
             response.raise_for_status()
-            return response.json()["templates"]
+            templates = response.json()["data"]
+            if len(templates) == 0:
+                return None
+            return templates[0]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to get nginx templates from Laravel Forge API"
@@ -89,7 +114,7 @@ class ForgeApi:
                 f"{self.forge_uri}/servers/{server_id}/nginx/templates/{template_id}"
             )
             response.raise_for_status()
-            return response.json()["template"]["content"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to get nginx template by id from Laravel Forge API"

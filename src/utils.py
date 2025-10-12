@@ -2,13 +2,12 @@ import re
 import time
 from pathlib import Path
 
-from cerberus import Validator
-
 from schema import schema
+from validator import ConfigValidator
 
 
 def validate_yaml_data(data):
-    v = Validator(schema, purge_unknown=False)  # type: ignore
+    v = ConfigValidator(schema, purge_unknown=True)  # type: ignore
     v.allow_default_values = True  # type: ignore
     if not v.validate(data, normalize=True):  # type: ignore
         raise Exception(f"YAML data validation failed: {v.errors}")  # type: ignore
@@ -67,7 +66,7 @@ def wait(callback, max_retries=8):
     return False
 
 
-def parse_env(env: str | None) -> dict:
+def parse_env(env: str | None) -> dict[str, str]:
     if not env:
         return {}
     parsed_env = {}
@@ -91,42 +90,6 @@ def ensure_relative_path(path: str | None):
     if path and path.startswith("/"):
         return "." + path
     return path
-
-
-def load_config(yaml_data):
-    # TODO: remove default values, as they are set by the validate_yaml_data function
-    config = {
-        "server_name": yaml_data["server_name"],
-        "github_repository": yaml_data["github_repository"],
-        "github_branch": yaml_data.get("github_branch", "main"),
-        "sites": [],
-    }
-    for site in yaml_data.get("sites", []):
-
-        config["sites"].append(
-            {
-                "site_domain": site["site_domain"],
-                "github_branch": site.get("github_branch"),
-                "root_dir": ensure_relative_path(site.get("root_dir", ".")),
-                "web_dir": ensure_relative_path(site.get("web_dir", "public")),
-                "project_type": site.get("project_type", "html"),
-                "php_version": site.get("php_version"),
-                "deployment_commands": site.get("deployment_commands"),
-                "daemons": site.get("daemons", []),
-                "laravel_scheduler": site.get("laravel_scheduler"),
-                "environment": site.get("environment"),
-                "env_file": ensure_relative_path(site.get("env_file")),
-                "aliases": site.get("aliases", []),
-                "nginx_template": site.get("nginx_template", "default"),
-                "nginx_template_variables": site.get("nginx_template_variables", {}),
-                "nginx_custom_config": ensure_relative_path(
-                    site.get("nginx_custom_config")
-                ),
-                "certificate": site.get("certificate", False),
-                "clone_repository": site.get("clone_repository", True),
-            }
-        )
-    return config
 
 
 def get_domains_certificate(certificates, domains) -> dict | None:
