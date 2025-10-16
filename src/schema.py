@@ -18,6 +18,12 @@ schema = {
                     ],
                 },
                 "name": {"type": "string", "required": True},
+                "www_redirect_type": {
+                    "type": "string",
+                    "required": False,
+                    "default": "none",
+                    "allowed": ["from-www", "to-www", "none"],
+                },
                 "github_branch": {
                     "type": "string",
                     "required": False,
@@ -45,7 +51,12 @@ schema = {
                         "other",
                     ],
                 },
-                "php_version": {"type": "string", "required": False},
+                "php_version": {"type": "string", "required": False},  # ex 8.4
+                "install_composer_dependencies": {
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
+                },
                 "deployment_commands": {
                     "type": "string",
                     "required": False,
@@ -78,15 +89,20 @@ schema = {
                     "required": False,
                     "default": False,
                 },
-                "website_isolation": {
+                "isolated": {
                     "type": "boolean",
                     "required": False,
                     "default": False,
-                    "isolation_user_required": True,
+                    "isolated_user_required": True,
                 },
-                "isolation_user": {
+                "isolated_user": {
                     "type": "string",
                     "required": False,
+                },
+                "zero_downtime_deployments": {
+                    "type": "boolean",
+                    "required": False,
+                    "default": False,
                 },
                 "clone_repository": {
                     "type": "boolean",

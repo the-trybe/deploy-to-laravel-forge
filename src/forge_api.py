@@ -6,13 +6,13 @@ from utils import format_php_version
 
 
 class ForgeApi:
-    def __init__(self, org):
+    def __init__(self, api_token, org):
         self.forge_uri = f"https://forge.laravel.com/api/{org}"
 
         self.session = requests.sessions.Session()
         self.session.headers.update(
             {
-                "Authorization": f"Bearer {FORGE_API_TOKEN}",
+                "Authorization": f"Bearer {api_token}",
                 "Accept": "application/json",
                 "Content-Type": "application/json",
             }
@@ -21,7 +21,7 @@ class ForgeApi:
     # --- Servers ---
     def get_server_by_name(self, server_name):
         try:
-            response = session.get(
+            response = self.session.get(
                 f"{self.forge_uri}/servers?filter[name]={server_name}"
             )
             response.raise_for_status()
@@ -40,7 +40,7 @@ class ForgeApi:
                 json=payload,
             )
             response.raise_for_status()
-            return response.json()["site"]
+            return response.json()["data"]
 
         except requests.RequestException as e:
             raise Exception("Failed to create site from Laravel Forge API") from e
@@ -60,7 +60,7 @@ class ForgeApi:
                 f"{self.forge_uri}/servers/{server_id}/sites/{site_id}"
             )
             res.raise_for_status()
-            return res.json()["site"]
+            return res.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to get site from Laravel Forge API") from e
 
@@ -71,7 +71,7 @@ class ForgeApi:
                 json={**kwargs},
             )
             response.raise_for_status()
-            return response.json()["site"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to update site from Laravel Forge API") from e
 
@@ -102,7 +102,7 @@ class ForgeApi:
                 },
             )
             response.raise_for_status()
-            return response.json()["template"]["id"]
+            return response.json()["data"]["id"]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to create nginx template from Laravel Forge API"
@@ -120,13 +120,25 @@ class ForgeApi:
                 "Failed to get nginx template by id from Laravel Forge API"
             ) from e
 
+    def update_nginx_template(self, server_id, template_id, content):
+        try:
+            response = self.session.put(
+                f"{self.forge_uri}/servers/{server_id}/nginx/templates/{template_id}",
+                json={"content": content},
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to update nginx template from Laravel Forge API"
+            ) from e
+
     def get_nginx_config(self, server_id, site_id):
         try:
             response = self.session.get(
                 f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/nginx"
             )
             response.raise_for_status()
-            return response.content.decode("utf-8")
+            return response.json()["data"]
 
         except requests.RequestException as e:
             raise Exception("Failed to get nginx config from Laravel Forge API") from e
@@ -141,6 +153,45 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to set nginx config from Laravel Forge API") from e
 
+    # --- Domains ---
+    def get_site_domains(self, server_id, site_id):
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception("Failed to get site domains from Laravel Forge API") from e
+
+    def create_site_domain(self, server_id, site_id, domain):
+        try:
+            response = self.session.post(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains",
+                json={
+                    "name": domain,
+                    "allow_wildcard_subdomains": False,
+                    "www_redirect_type": "none",
+                },
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to create site domain from Laravel Forge API"
+            ) from e
+
+    def delete_site_domain(self, server_id, site_id, domain_id):
+        try:
+            response = self.session.delete(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}"
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to delete site domain from Laravel Forge API"
+            ) from e
+
     # --- Certificates ---
 
     def list_certificates(self, server_id, site_id):
@@ -149,7 +200,7 @@ class ForgeApi:
                 f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/certificates"
             )
             response.raise_for_status()
-            return response.json()["certificates"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to list certificates from Laravel Forge API") from e
 
@@ -159,7 +210,7 @@ class ForgeApi:
                 f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/certificates/{certificate_id}"
             )
             response.raise_for_status()
-            return response.json()["certificate"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to get certificate by id from Laravel Forge API"
@@ -183,7 +234,7 @@ class ForgeApi:
                 json={"domains": domains},
             )
             response.raise_for_status()
-            return response.json()["certificate"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to create certificate from Laravel Forge API"
@@ -193,17 +244,33 @@ class ForgeApi:
 
     def get_server_installed_php_versions(self, server_id):
         try:
-            res = self.session.get(f"{self.forge_uri}/servers/{server_id}/php")
+            res = self.session.get(f"{self.forge_uri}/servers/{server_id}/php/versions")
             res.raise_for_status()
-            return res.json()
+            return res.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to get installed PHP versions") from e
 
+    def get_php_version(self, server_id, version):
+        """Get a specific PHP version by filtering. Returns None if not found."""
+        try:
+            res = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/php/versions?filter[version]={version}"
+            )
+            res.raise_for_status()
+            versions = res.json()["data"]
+            return versions[0] if len(versions) > 0 else None
+        except requests.RequestException as e:
+            raise Exception("Failed to get PHP version") from e
+
     def install_php_version(self, server_id, version):
         try:
+            # Convert version format from '8.4' to 'php84' for the API
+            version_clean = version.replace(".", "")
+            formatted_version = f"php{version_clean}"
+
             response = self.session.post(
                 f"{self.forge_uri}/servers/{server_id}/php",
-                json={"version": version},
+                json={"version": formatted_version},
             )
             response.raise_for_status()
         except requests.RequestException as e:
@@ -215,7 +282,7 @@ class ForgeApi:
             # get current schedule job
             response = self.session.get(f"{self.forge_uri}/servers/{server_id}/jobs")
             response.raise_for_status()
-            return response.json()["jobs"]
+            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to get server jobs from Laravel Forge API") from e
 

@@ -13,7 +13,6 @@ from utils import (
     cat_paths,
     format_php_version,
     get_domains_certificate,
-    load_config,
     parse_env,
     replace_nginx_variables,
     replace_secrets_yaml,
@@ -72,7 +71,7 @@ def main():
 
     config = validate_yaml_data(data)
 
-    forge_api = ForgeApi(config["organization"])
+    forge_api = ForgeApi(FORGE_API_TOKEN, config["organization"])
 
     server = forge_api.get_server_by_name(config["server"])
     server_id = server.get("id", None)
@@ -140,37 +139,49 @@ def main():
                         server_template["attributes"]["content"]
                         != local_template_content
                     ):
-                        try:
-                            response = session.put(
-                                f"{forge_uri}/servers/{server_id}/nginx/templates/{nginx_template_id}",
-                                json={"content": local_template_content},
-                            )
-                            response.raise_for_status()
-                            logger.info("Nginx template updated successfully")
-                        except requests.RequestException as e:
-                            raise Exception(
-                                "Failed to update nginx template from Laravel Forge API"
-                            ) from e
+                        forge_api.update_nginx_template(
+                            server_id, nginx_template_id, local_template_content
+                        )
+                        logger.info("Nginx template updated successfully")
 
             create_site_payload = {
-                "domain": site_conf["site_domain"],
-                "project_type": site_conf["project_type"],
+                "name": site_conf["name"],
+                "domain_mode": site_conf["domain_mode"],
+                "www_redirect_type": site_conf["www_redirect_type"],
+                "type": site_conf["project_type"],
                 "aliases": site_conf["aliases"],
-                "directory": str(Path(site_conf["root_dir"]) / site_conf["web_dir"]),
-                "isolated": False,
-                "nginx_template": nginx_template_id,
+                "web_directory": str(
+                    Path(site_conf["root_dir"]) / site_conf["web_dir"]
+                ),
+                "is_isolated": site_conf["isolated"],
+                "isolated_user": site_conf["isolated_user"],
+                "nginx_template_id": nginx_template_id,
+                "push_to_deploy": False,
             }
+
+            # add repository
+            if site_conf["clone_repository"]:
+                logger.info("Adding repository...")
+
+                create_site_payload["source_control_provider"] = "github"
+                create_site_payload["repository"] = config["github_repository"]
+                create_site_payload["branch"] = (
+                    site_conf.get("github_branch") or config["github_branch"]
+                )
+                create_site_payload["install_composer_dependencies"] = site_conf[
+                    "install_composer_dependencies"
+                ]
 
             # create site
             logger.info("Creating site...")
             existing_site = forge_api.create_site(server_id, create_site_payload)
 
-            def until_site_installed(site):
-                site = forge_api.get_site_by_id(server_id, site["id"])
-                return site["status"] == "installed"
+            def until_repo_installed():
+                site = forge_api.get_site_by_id(server_id, site_id)
+                return site["attributes"]["repository"]["status"] == "installed"
 
-            if not wait(lambda: until_site_installed(existing_site)):
-                raise Exception("Site creation timed out")
+            if site_conf["clone_repository"] and not wait(until_repo_installed):
+                raise Exception("Adding repository timed out")
 
             logger.info("Site created successfully")
 
@@ -178,7 +189,7 @@ def main():
             try:
                 nginx_config = forge_api.get_nginx_config(
                     server_id, existing_site["id"]
-                )
+                )["attributes"]["content"]
                 nginx_config = replace_nginx_variables(
                     nginx_config, site_conf["nginx_template_variables"]
                 )
@@ -194,12 +205,35 @@ def main():
 
         # ---- update aliases ----
         try:
+            # TODO: change aliases to extra_domains (or smtng like that) and add www redirect type option
             site_aliases = existing_site["aliases"]
-            if set(site_aliases) != set(site_conf["aliases"]):
-                existing_site = forge_api.update_site(
-                    server_id, site_id, aliases=site_conf["aliases"]
-                )
-                logger.info("Site aliases updated successfully.")
+            existing_domains = forge_api.get_site_domains(server_id, site_id)
+            existing_domains_list = [
+                domain["attributes"]["name"]
+                for domain in existing_domains
+                if domain["attributes"]["type"] != "primary"
+            ]
+            config_aliases = site_conf["aliases"]
+
+            # If aliases are not the same, sync them
+            if set(existing_domains_list) != set(config_aliases):
+                # Delete domains that exist in site but not in config
+                for domain in existing_domains:
+                    domain_name = domain["attributes"]["name"]
+                    if (
+                        domain["attributes"]["type"] != "primary"
+                        and domain_name not in config_aliases
+                    ):
+                        forge_api.delete_site_domain(server_id, site_id, domain["id"])
+                        logger.info(f"Domain '{domain_name}' deleted from site.")
+
+                # Create domains that exist in config but not in site
+                for alias in config_aliases:
+                    if alias not in existing_domains_list:
+                        forge_api.create_site_domain(server_id, site_id, alias)
+                        logger.info(f"Domain '{alias}' added to site.")
+
+                logger.info("Site aliases configured successfully.")
 
         except Exception as e:
             raise Exception("Error updating aliases.") from e
@@ -220,7 +254,7 @@ def main():
                 # compare existing site nginx config and the one in the file if different update
                 site_existing_nginx_config = forge_api.get_nginx_config(
                     server_id, site_id
-                )
+                )["attributes"]["content"]
                 if site_existing_nginx_config != nginx_custom_content:
                     forge_api.set_nginx_config(server_id, site_id, nginx_custom_content)
                     logger.info(f"Nginx config updated.")
@@ -235,38 +269,32 @@ def main():
 
         try:
             site_php_version = forge_api.get_site_by_id(server_id, site_id)[
-                "php_version"
-            ]
+                "attributes"
+            ]["php_version"]
         except Exception as e:
             raise Exception("Failed to get site php version") from e
 
-        if site_conf["php_version"] and site_conf["php_version"] != site_php_version:
+        if (
+            site_conf.get("php_version")
+            and site_conf["php_version"] != site_php_version
+        ):
             # check if version is installed, if not install it
             server_php_versions = forge_api.get_server_installed_php_versions(server_id)
             if site_conf["php_version"] not in [
-                php["version"] for php in server_php_versions
+                php["attributes"]["version"] for php in server_php_versions
             ]:
                 logger.info("Installing php version...")
                 try:
-                    response = session.post(
-                        f"{forge_uri}/servers/{server_id}/php",
-                        json={"version": site_conf["php_version"]},
-                    )
-                    response.raise_for_status()
                     forge_api.install_php_version(server_id, site_conf["php_version"])
 
                     # wait for installation
                     def until_php_installed():
-                        res = session.get(f"{forge_uri}/servers/{server_id}/php")
-                        res.raise_for_status()
-                        installed_php = next(
-                            (
-                                php
-                                for php in res.json()
-                                if php["version"] == site_conf["php_version"]
-                            ),
+                        installed_php = forge_api.get_php_version(
+                            server_id, site_conf["php_version"]
                         )
-                        return installed_php["status"] == "installed"
+                        if not installed_php:
+                            raise Exception("Php version not found after installation")
+                        return installed_php["attributes"]["status"] == "installed"
 
                     if not wait(until_php_installed):
                         raise Exception("Php installation timed out")
@@ -289,38 +317,6 @@ def main():
         site_dir = str(
             Path("/home/forge/") / site_conf["site_domain"] / site_conf["root_dir"]
         )
-
-        # add repository
-        if (
-            site_conf["clone_repository"]
-            and existing_site["repository"] != config["github_repository"]
-        ):
-            logger.info("Adding repository...")
-            try:
-                response = session.post(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}/git",
-                    json={
-                        "provider": "github",
-                        "repository": config["github_repository"],
-                        "branch": site_conf.get("github_branch")
-                        or config["github_branch"],
-                        "composer": False,
-                    },
-                )
-                response.raise_for_status()
-
-                existing_site = response.json()["site"]
-
-                def until_repo_installed():
-                    site = forge_api.get_site_by_id(server_id, site_id)
-                    return site["repository_status"] == "installed"
-
-                if not wait(until_repo_installed):
-                    raise Exception("Adding repository timed out")
-            except Exception as e:
-                raise Exception(f"Failed to add repository: {e}") from e
-
-            logger.info("Repository added successfully")
 
         # create daemons
         try:

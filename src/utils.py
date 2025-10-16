@@ -107,3 +107,15 @@ def format_php_version(php_version: str) -> str:
     """
     match = re.match(r"php(\d)(\d+)", php_version)
     return f"php{match.group(1)}.{match.group(2)}" if match else "php"
+
+
+def format_php_version_for_api(php_version: str) -> str:
+    """
+    Converts a PHP version string to the format expected by the Forge API.
+    Handles formats like '8.4' or 'php8.4' and converts to 'php84'.
+    """
+    # Remove 'php' prefix if present
+    version = php_version.lower().replace("php", "")
+    # Remove dots
+    version = version.replace(".", "")
+    return f"php{version}"
