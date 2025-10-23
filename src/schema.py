@@ -40,28 +40,31 @@ schema = {
                     "default": "other",
                     "allowed": [
                         "laravel",
-                        "symfony",
-                        "statamic",
-                        "wordpress",
-                        "phpmyadmin",
-                        "php",
-                        "next.js",
-                        "nuxt.js",
-                        "static-html",
                         "other",
                     ],
                 },
-                "php_version": {"type": "string", "required": False},  # ex 8.4
+                "php_version": {"type": "string", "required": False},  # ex php84
                 "install_composer_dependencies": {
                     "type": "boolean",
                     "required": False,
                     "default": False,
                 },
-                "deployment_commands": {
+                "deployment_script": {
                     "type": "string",
                     "required": False,
                 },
-                "daemons": {"type": "list", "required": False, "default": []},
+                "processes": {
+                    "type": "list",
+                    "required": False,
+                    "default": [],
+                    "schema": {
+                        "type": "dict",
+                        "schema": {
+                            "name": {"type": "string", "required": True},
+                            "command": {"type": "string", "required": True},
+                        },
+                    },
+                },
                 "laravel_scheduler": {
                     "type": "boolean",
                     "required": False,

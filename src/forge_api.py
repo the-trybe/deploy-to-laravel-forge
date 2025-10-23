@@ -75,6 +75,75 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to update site from Laravel Forge API") from e
 
+    def update_deployment_script(self, server_id, site_id, content, auto_source=False):
+        try:
+            response = self.session.put(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/deployments/script",
+                json={
+                    "content": content,
+                    "auto_source": auto_source,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to update deployment script from Laravel Forge API"
+            ) from e
+
+    def update_site_environment(self, server_id, site_id, content):
+        try:
+            response = self.session.put(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/environment",
+                json={
+                    "environment": content,
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to update site environment from Laravel Forge API"
+            ) from e
+
+    def deploy_site(self, server_id, site_id):
+        """Trigger a site deployment. Returns the deployment ID."""
+        try:
+            response = self.session.post(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/deployments"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception("Failed to deploy site from Laravel Forge API") from e
+
+    def get_deployment_status(self, server_id, site_id, deployment_id):
+        """Get the status of a deployment."""
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/deployments/{deployment_id}/status"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to get deployment status from Laravel Forge API"
+            ) from e
+
+    def get_deployment_log(self, server_id, site_id, deployment_id):
+        """Get the deployment log. Returns None if log doesn't exist (404)."""
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/deployments/{deployment_id}/log"
+            )
+            response.raise_for_status()
+            return response.text
+        except requests.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
+                return None
+            raise Exception(
+                "Failed to get deployment log from Laravel Forge API"
+            ) from e
+
     # --- nginx ---
 
     def get_nginx_templates_by_name(self, server_id, name) -> dict | None:
@@ -192,6 +261,49 @@ class ForgeApi:
                 "Failed to delete site domain from Laravel Forge API"
             ) from e
 
+    def domain_has_certificate(self, server_id, site_id, domain_id):
+        """Check if a domain has a certificate. Returns True if certificate exists, False otherwise."""
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}/certificate"
+            )
+            response.raise_for_status()
+            return True
+        except requests.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
+                return False
+            raise Exception(
+                "Failed to check domain certificate from Laravel Forge API"
+            ) from e
+
+    def get_domain_certificate(self, server_id, site_id, domain_id):
+        """Get the certificate for a specific domain. Returns None if not found."""
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}/certificate"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
+                return None
+            raise Exception(
+                "Failed to get domain certificate from Laravel Forge API"
+            ) from e
+
+    def create_domain_certificate(self, server_id, site_id, domain_id):
+        """Create a LetsEncrypt certificate for a domain."""
+        try:
+            response = self.session.post(
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}/certificate"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to create domain certificate from Laravel Forge API"
+            ) from e
+
     # --- Certificates ---
 
     def list_certificates(self, server_id, site_id):
@@ -276,11 +388,52 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to install PHP version") from e
 
+    # --- Daemons ---
+    def get_server_daemons(self, server_id):
+        try:
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/background-proces"
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception(
+                "Failed to get server daemons from Laravel Forge API"
+            ) from e
+
+    def create_daemon(self, server_id, name, command, directory, user="forge"):
+        try:
+            response = self.session.post(
+                f"{self.forge_uri}/servers/{server_id}/background-proces",
+                json={
+                    "name": name,
+                    "command": command,
+                    "user": user,
+                    "directory": directory,
+                    "processes": 1,
+                },
+            )
+            response.raise_for_status()
+            return response.json()["data"]
+        except requests.RequestException as e:
+            raise Exception("Failed to create daemon from Laravel Forge API") from e
+
+    def delete_daemon(self, server_id, daemon_id):
+        try:
+            response = self.session.delete(
+                f"{self.forge_uri}/servers/{server_id}/background-proces/{daemon_id}"
+            )
+            response.raise_for_status()
+        except requests.RequestException as e:
+            raise Exception("Failed to delete daemon from Laravel Forge API") from e
+
     # --- Cron Jobs ---
     def get_server_jobs(self, server_id):
         try:
             # get current schedule job
-            response = self.session.get(f"{self.forge_uri}/servers/{server_id}/jobs")
+            response = self.session.get(
+                f"{self.forge_uri}/servers/{server_id}/scheduled-jobs"
+            )
             response.raise_for_status()
             return response.json()["data"]
         except requests.RequestException as e:
@@ -291,12 +444,13 @@ class ForgeApi:
         server_id,
         cmd: str,
         frequency: Literal["minutely", "hourly", "nightly", "weekly", "monthly"],
+        user="forge",
     ):
         try:
             response = self.session.post(
-                f"{self.forge_uri}/servers/{server_id}/jobs",
+                f"{self.forge_uri}/servers/{server_id}/scheduled-jobs",
                 json={
-                    "user": "forge",
+                    "user": user,
                     "command": cmd,
                     "frequency": frequency,
                 },
@@ -308,7 +462,7 @@ class ForgeApi:
     def delete_job(self, server_id, job_id):
         try:
             response = self.session.delete(
-                f"{self.forge_uri}/servers/{server_id}/jobs/{job_id}"
+                f"{self.forge_uri}/servers/{server_id}/scheduled-jobs/{job_id}"
             )
             response.raise_for_status()
         except requests.RequestException as e:

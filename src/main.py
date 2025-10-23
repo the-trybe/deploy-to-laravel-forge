@@ -96,6 +96,33 @@ def main():
             None,
         )
 
+        # install site's php version in server
+        if site_conf.get("php_version"):
+            # check if version is installed, if not install it
+            server_php_versions = forge_api.get_server_installed_php_versions(server_id)
+            if site_conf["php_version"] not in [
+                php["attributes"]["version"] for php in server_php_versions
+            ]:
+                logger.info(f"Installing php version {site_conf['php_version']}...")
+                try:
+                    forge_api.install_php_version(server_id, site_conf["php_version"])
+
+                    # wait for installation
+                    def until_php_installed():
+                        installed_php = forge_api.get_php_version(
+                            server_id, site_conf["php_version"]
+                        )
+                        if not installed_php:
+                            raise Exception("Php version not found after installation")
+                        return installed_php["attributes"]["status"] == "installed"
+
+                    if not wait(until_php_installed):
+                        raise Exception("Php installation timed out")
+                except Exception as e:
+                    raise Exception(f"Failed to install php version: {e}") from e
+
+                logger.info(f"Php version {site_conf['php_version']} installed")
+
         # create site
         if not existing_site:
             # nginx template
@@ -149,14 +176,12 @@ def main():
                 "domain_mode": site_conf["domain_mode"],
                 "www_redirect_type": site_conf["www_redirect_type"],
                 "type": site_conf["project_type"],
-                "aliases": site_conf["aliases"],
-                "web_directory": str(
-                    Path(site_conf["root_dir"]) / site_conf["web_dir"]
-                ),
+                "web_directory": cat_paths(site_conf["root_dir"], site_conf["web_dir"]),
                 "is_isolated": site_conf["isolated"],
                 "isolated_user": site_conf["isolated_user"],
                 "nginx_template_id": nginx_template_id,
                 "push_to_deploy": False,
+                "php_version": site_conf.get("php_version"),
             }
 
             # add repository
@@ -278,97 +303,72 @@ def main():
             site_conf.get("php_version")
             and site_conf["php_version"] != site_php_version
         ):
-            # check if version is installed, if not install it
-            server_php_versions = forge_api.get_server_installed_php_versions(server_id)
-            if site_conf["php_version"] not in [
-                php["attributes"]["version"] for php in server_php_versions
-            ]:
-                logger.info("Installing php version...")
-                try:
-                    forge_api.install_php_version(server_id, site_conf["php_version"])
-
-                    # wait for installation
-                    def until_php_installed():
-                        installed_php = forge_api.get_php_version(
-                            server_id, site_conf["php_version"]
-                        )
-                        if not installed_php:
-                            raise Exception("Php version not found after installation")
-                        return installed_php["attributes"]["status"] == "installed"
-
-                    if not wait(until_php_installed):
-                        raise Exception("Php installation timed out")
-                except Exception as e:
-                    raise Exception(f"Failed to install php version: {e}") from e
-
-                logger.info(f"Php version {site_conf['php_version']} installed")
-
             # update site php version
-            try:
-                res = session.put(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}/php",
-                    json={"version": site_conf["php_version"]},
-                )
-                res.raise_for_status()
-            except Exception as e:
-                raise Exception(f"Failed to update site php version: {e}") from e
+            logger.debug(
+                f"php version changed from {site_php_version} to {site_conf['php_version']}, updating..."
+            )
+            forge_api.update_site(
+                server_id, site_id, php_version=site_conf["php_version"]
+            )
             logger.info(f"Php version set to {site_conf["php_version"]}")
 
-        site_dir = str(
-            Path("/home/forge/") / site_conf["site_domain"] / site_conf["root_dir"]
+        site_user = site_conf["isolated_user"] if site_conf["isolated"] else "forge"
+        site_dir = cat_paths(
+            f"/home/{site_user}/",
+            site_conf["name"],
+            "current" if site_conf["zero_downtime_deployments"] else ".",
+            site_conf["root_dir"],
         )
 
         # create daemons
         try:
             daemon_ids = []
             # get existing site daemons
-            response = session.get(f"{forge_uri}/servers/{server_id}/daemons")
-            response.raise_for_status()
+            server_daemons = forge_api.get_server_daemons(server_id)
             # existing site daemons
             site_daemons = [
                 daemon
-                for daemon in response.json()["daemons"]
-                if daemon["directory"] == site_dir
+                for daemon in server_daemons
+                if daemon["attributes"]["directory"] == site_dir
             ]
             # delete daemon if not in the config
             for dm in site_daemons:
-                if dm["command"] not in [
-                    daemon["command"] for daemon in site_conf["daemons"]
+                if dm["attributes"]["command"] not in [
+                    daemon["command"] for daemon in site_conf["processes"]
                 ]:
-                    response = session.delete(
-                        f"{forge_uri}/servers/{server_id}/daemons/{dm['id']}"
+                    forge_api.delete_daemon(server_id, dm["id"])
+                    logger.info(
+                        f"Daemon-{dm['id']} `{dm["attributes"]['command']}` deleted."
                     )
-                    response.raise_for_status()
-                    logger.info(f"Daemon-{dm["id"]} `{dm["command"]}` deleted.")
                 else:
                     daemon_ids.append(dm["id"])
 
             # add new daemons
-            for daemon in site_conf["daemons"]:
-                if daemon["command"] not in [dm["command"] for dm in site_daemons]:
-                    response = session.post(
-                        f"{forge_uri}/servers/{server_id}/daemons",
-                        json={
-                            "command": daemon["command"],
-                            "user": "forge",
-                            "directory": site_dir,
-                            "startsecs": 1,
-                        },
+            for process in site_conf["processes"]:
+                if process["command"] not in [
+                    dm["attributes"]["command"] for dm in site_daemons
+                ]:
+                    new_daemon = forge_api.create_daemon(
+                        server_id,
+                        process["name"],
+                        process["command"],
+                        site_dir,
+                        user=site_user,
                     )
-                    response.raise_for_status()
-                    new_daemon = response.json()["daemon"]
                     daemon_ids.append(new_daemon["id"])
                     logger.info(
-                        f"Daemon-{new_daemon["id"]} `{new_daemon["command"]}` created."
+                        f"Daemon-{new_daemon['id']} `{new_daemon['attributes']['command']}` created."
                     )
         except Exception as e:
             raise Exception(f"Failed to add daemons: {e}") from e
 
         # ----------Scheduler----------
-        if site_conf["project_type"] == "php":
+        if site_conf["project_type"] == "laravel":
             try:
                 scheduler_php_version = format_php_version(
-                    forge_api.get_site_by_id(server_id, site_id)["php_version"]
+                    forge_api.get_site_by_id(server_id, site_id)["attributes"][
+                        "php_version"
+                    ]
                 )
 
                 scheduler_cmd = (
@@ -377,7 +377,11 @@ def main():
 
                 server_jobs = forge_api.get_server_jobs(server_id)
                 current_scheduler_job = next(
-                    (job for job in server_jobs if job["command"] == scheduler_cmd),
+                    (
+                        job
+                        for job in server_jobs
+                        if job["attributes"]["command"] == scheduler_cmd
+                    ),
                     None,
                 )
 
@@ -393,29 +397,38 @@ def main():
 
         # deployment script
         # if deployment_script not provided, the default deployment script generated by forge is kept
-        if site_conf["deployment_commands"]:
-            deployment_script = (
-                f"# generated by deployment script, do not modify\n"
-                + f"cd {site_dir}\n"
-                + "git pull origin $FORGE_SITE_BRANCH\n"
-            )
+        if site_conf["deployment_script"]:
+            deployment_script = f"# Generated by deployment action, do not modify\n"
 
-            deployment_script += site_conf["deployment_commands"] + "\n"
+            if not site_conf["zero_downtime_deployments"]:
+                deployment_script += (
+                    f"cd {site_dir}\n"
+                    + "git fetch --prune --tags origin"
+                    + 'git reset --hard "origin/$FORGE_SITE_BRANCH"\n'
+                )
+            else:
+                deployment_script += "$CREATE_RELEASE()\n" + (
+                    f"cd {site_conf["root_dir"]}\n"
+                    if site_conf["root_dir"] != "."
+                    else ""
+                )
+
+            deployment_script += site_conf["deployment_script"] + "\n"
+
+            if site_conf["zero_downtime_deployments"]:
+                deployment_script += "$ACTIVATE_RELEASE()\n"
+
             for d_id in daemon_ids:
                 deployment_script += f"sudo -S supervisorctl restart daemon-{d_id}:*\n"
 
             try:
-                response = session.put(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}/deployment/script",
-                    json={
-                        "content": deployment_script,
-                        # disabled auto_source because it causes a problem when code is not in root directory
-                        # because forge creates the env file in the specified directory, but tries to source it from root
-                        "auto_source": False,
-                    },
+                forge_api.update_deployment_script(
+                    server_id,
+                    site_id,
+                    deployment_script,
+                    auto_source=False,
                 )
-                response.raise_for_status()
-            except requests.RequestException as e:
+            except Exception as e:
                 raise Exception(f"Failed to add deployment script: {e}") from e
 
             logger.info("Deployment script added successfully")
@@ -432,15 +445,15 @@ def main():
                             "Loading environment variables from file `%s`",
                             site_conf["env_file"],
                         )
+                        env_file_content = file.read()
+                        logger.debug("Env file content:\n%s", env_file_content)
                         # replace screts
                         if secrets:
                             env_file_content = str(
-                                replace_secrets_yaml(file.read(), secrets)
+                                replace_secrets_yaml(env_file_content, secrets)
                             )
-                            file_env = parse_env(env_file_content)
-                        else:
-                            file_env = parse_env(file.read())
-                        logger.debug("Env variables loaded from file:\n%s", file_env)
+                        # parse env
+                        file_env = parse_env(env_file_content)
                         site_env.update(file_env)
                 except FileNotFoundError as e:
                     raise Exception(
@@ -453,13 +466,7 @@ def main():
 
             env_str = "\n".join([f"{k}={v}" for k, v in site_env.items()])
             if len(env_str) > 0:
-                response = session.put(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}/env",
-                    json={
-                        "content": env_str,
-                    },
-                )
-                response.raise_for_status()
+                forge_api.update_site_environment(server_id, site_id, env_str)
                 logger.info("Environment variables set successfully")
 
         except Exception as e:
@@ -468,73 +475,105 @@ def main():
         # certificate
         try:
             if site_conf["certificate"]:
-                site_certs = forge_api.list_certificates(server_id, site_id)
-                site_certificate = get_domains_certificate(
-                    site_certs, [site_conf["site_domain"], *site_conf["aliases"]]
-                )
-                if not site_certificate:
-                    logger.info("Installing certificate...")
-                    site_certificate = forge_api.create_certificate(
-                        server_id,
-                        site_id,
-                        [site_conf["site_domain"], *site_conf["aliases"]],
-                    )
+                # Get all site domains
+                all_domains = forge_api.get_site_domains(server_id, site_id)
 
-                    def until_cert_installed(cert_id):
-                        site_certificate = forge_api.get_certificate_by_id(
-                            server_id, site_id, cert_id
+                # Filter out on-forge.com domains
+                domains_to_certify = [
+                    domain
+                    for domain in all_domains
+                    if not domain["attributes"]["name"].endswith(".on-forge.com")
+                ]
+
+                # For each domain, check if certificate exists and create if needed
+                for domain in domains_to_certify:
+                    domain_id = domain["id"]
+                    domain_name = domain["attributes"]["name"]
+
+                    # Check if domain has a certificate
+                    if not forge_api.domain_has_certificate(
+                        server_id, site_id, domain_id
+                    ):
+                        logger.info(
+                            f"Installing certificate for domain '{domain_name}'..."
                         )
-                        return site_certificate["status"] == "installed"
 
-                    if not wait(lambda: until_cert_installed(site_certificate["id"])):  # type: ignore
-                        raise Exception("Applying certificate timed out")
+                        # Create certificate
+                        cert = forge_api.create_domain_certificate(
+                            server_id, site_id, domain_id
+                        )
 
-                    logger.info("Certificate added successfully")
+                        # Wait for certificate to be installed
+                        def until_cert_installed():
+                            domain_cert = forge_api.get_domain_certificate(
+                                server_id, site_id, domain_id
+                            )
+                            if not domain_cert:
+                                return False
+                            return domain_cert["attributes"]["status"] == "installed"
 
-                if site_certificate["active"] == False:
-                    forge_api.activate_certificate(
-                        server_id, site_id, site_certificate["id"]
-                    )
-                    logger.info("Certificate activated successfully")
-        except requests.RequestException as e:
-            raise Exception(f"Failed to add certificate: {e}") from e
+                        if not wait(until_cert_installed):
+                            raise Exception(
+                                f"Certificate installation timed out for domain '{domain_name}'"
+                            )
+
+                        logger.info(f"Certificate installed for domain '{domain_name}'")
+                    else:
+                        logger.info(
+                            f"Certificate already exists for domain '{domain_name}'"
+                        )
+
+        except Exception as e:
+            raise Exception(f"Failed to manage certificates: {e}") from e
 
         # deploy site
         if site_conf["clone_repository"]:
             logger.info("Deploying site...")
-            response = session.post(
-                f"{forge_uri}/servers/{server_id}/sites/{site_id}/deployment/deploy"
-            )
-            response.raise_for_status()
-            existing_site = response.json()["site"]
+            
+            # Trigger deployment and get deployment ID
+            deployment_id = forge_api.deploy_site(server_id, site_id)["id"]
+            logger.debug(f"Deployment ID: {deployment_id}")
 
-            def until_site_deployed():
-                site = session.get(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}"
-                ).json()["site"]
-                return site["deployment_status"] == None
-
-            if not wait(until_site_deployed, max_retries=-1):
-                raise Exception("Deploying site timed out")
-
-            # get deployment log
-            try:
-                response = session.get(
-                    f"{forge_uri}/servers/{server_id}/sites/{site_id}/deployment/log",
+            # Wait until deployment is finished
+            def until_deployment_finished():
+                status_data = forge_api.get_deployment_status(
+                    server_id, site_id, deployment_id
                 )
-                response.raise_for_status()
-                dep_log = response.content.decode("utf-8")
-                logger.info("Deployment log:\n%s", dep_log)
-            except requests.exceptions.HTTPError as e:
-                if response.status_code != 404:
-                    raise Exception("Failed to get deployment log") from e
+                status = status_data["attributes"]["status"]
+                logger.debug(f"Deployment status: {status}")
+                
+                # Check for failed states
+                if status in ["cancelled", "failed", "failed-build"]:
+                    return True
+                
+                # Check for success
+                if status == "finished":
+                    return True
+                
+                # Still in progress
+                return False
 
-            # check deployment status
-            deployment = session.get(
-                f"{forge_uri}/servers/{server_id}/sites/{site_id}/deployment-history",
-            ).json()["deployments"][0]
-            if deployment["status"] == "failed":
-                raise Exception("Deployment failed")
+            if not wait(until_deployment_finished, max_retries=-1):
+                raise Exception("Deployment status check timed out")
+
+            # Get final status
+            final_status_data = forge_api.get_deployment_status(
+                server_id, site_id, deployment_id
+            )
+            final_status = final_status_data["attributes"]["status"]
+
+            # Get deployment log (always show it)
+            deployment_log = forge_api.get_deployment_log(
+                server_id, site_id, deployment_id
+            )
+            if deployment_log:
+                logger.info("Deployment log:\n%s", deployment_log)
+            else:
+                logger.warning("Deployment log not available")
+
+            # Check if deployment failed
+            if final_status in ["cancelled", "failed", "failed-build"]:
+                raise Exception(f"Deployment failed with status: {final_status}")
 
             logger.info("Site deployed successfully")
 
