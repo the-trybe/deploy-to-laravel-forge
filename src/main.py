@@ -28,7 +28,7 @@ DEBUG = (
 SOURCE_REPO_PATH = os.getenv(
     "GITHUB_WORKSPACE", "./"
 )  # represents the path to the repository that triggered the GitHub Action
-DEPLOYMENT_FILE_NAME = os.getenv("DEPLOYMENT_FILE", "forge-deploy.yml")
+DEPLOYMENT_FILE_NAME = os.getenv("DEPLOYMENT_FILE", None)
 FORGE_API_TOKEN = os.getenv("FORGE_API_TOKEN")
 SECRETS_ENV = os.getenv("SECRETS", None)
 
@@ -48,7 +48,22 @@ def main():
     if FORGE_API_TOKEN is None or FORGE_API_TOKEN == "":
         raise Exception("FORGE_API_TOKEN is not set")
 
-    dep_file_path = cat_paths(SOURCE_REPO_PATH, DEPLOYMENT_FILE_NAME)
+    # Determine deployment file path
+    if DEPLOYMENT_FILE_NAME:
+        dep_file_path = cat_paths(SOURCE_REPO_PATH, DEPLOYMENT_FILE_NAME)
+    else:
+        # Check for both .yml and .yaml extensions
+        yml_path = cat_paths(SOURCE_REPO_PATH, "forge-deploy.yml")
+        yaml_path = cat_paths(SOURCE_REPO_PATH, "forge-deploy.yaml")
+
+        if os.path.exists(yml_path):
+            dep_file_path = yml_path
+        elif os.path.exists(yaml_path):
+            dep_file_path = yaml_path
+        else:
+            raise Exception(
+                "No deployment file found. Please create either 'forge-deploy.yml' or 'forge-deploy.yaml'"
+            )
 
     try:
         with open(dep_file_path, "r") as file:
@@ -529,7 +544,7 @@ def main():
         # deploy site
         if site_conf["clone_repository"]:
             logger.info("Deploying site...")
-            
+
             # Trigger deployment and get deployment ID
             deployment_id = forge_api.deploy_site(server_id, site_id)["id"]
             logger.debug(f"Deployment ID: {deployment_id}")
@@ -541,15 +556,15 @@ def main():
                 )
                 status = status_data["attributes"]["status"]
                 logger.debug(f"Deployment status: {status}")
-                
+
                 # Check for failed states
                 if status in ["cancelled", "failed", "failed-build"]:
                     return True
-                
+
                 # Check for success
                 if status == "finished":
                     return True
-                
+
                 # Still in progress
                 return False
 
