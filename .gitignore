@@ -1,0 +1,8 @@
+.env
+.env.test
+.secrets
+venv
+forge-deploy.yml
+__pycache__
+.pytest_cache
+.vscode
