@@ -1,28 +1,281 @@
-server_name: "devops-tst"
+organization: "infrastructure-brainiac"
+server: "aivotplus-clients"
 github_repository: "the-trybe/forge-deployment-scripts"
-github_branch: "main"
+github_branch: "test"
 
 sites:
-  - site_domain: "api.devops.salah-oukil.me"
-    aliases:
-      - "api3.devops.salah-oukil.me"
-      - "api4.devops.salah-oukil.me"
-    root_dir: "test/sites/api"
-    deployment_commands: |
+  - name: "test-laravel"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
+    root_dir: "laravel"
+    web_dir: "public"
+    php_version: "php84"
+    project_type: "laravel"
+    install_composer_dependencies: true
+    laravel_scheduler: true
+    processes:
+      - name: "queue-worker"
+        command: "php artisan queue:work --tries=3 --timeout=90"
+      - name: "horizon"
+        command: "php artisan horizon"
+
+  - name: "next.test.thetrybe.xyz"
+    domain_mode: "custom"
+    www_redirect_type: "to-www"
+    root_dir: "next"
+    web_dir: "public"
+    project_type: "other"
+    certificate: true
+    deployment_script: |
       npm ci
-    env_file: "/sites/api/.env.production"
+      npm run build
+    processes:
+      - name: "next-test"
+        command: "npm start"
     environment: |
-      DB_USERNAME=test-db
-      DB_PASSWORD=test-psswd
+      APP_NAME=TestNext
+      APP_ENV=production
+      DB_HOST=127.0.0.1
+      DB_PORT=3306
+      DB_DATABASE=laravel_db
+      DB_USERNAME=laravel_user
+      DB_PASSWORD=secret_password
+    aliases:
+      - "www.next.test.thetrybe.xyz"
+
+  # Site 3: Isolated site with custom nginx template and variables
+  - name: "test-isolated-nodejs"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
+    isolated: true
+    isolated_user: "nodeuser"
+    root_dir: "app"
+    web_dir: "dist"
     nginx_template: "reverse-proxy"
     nginx_template_variables:
-      PROXY_PASS_PORT: "3030"
-    certificate: true
-    daemons:
-      - command: "node index.js"
+      PROXY_PORT: "3000"
+      MAX_BODY_SIZE: "100M"
+      PROXY_TIMEOUT: "300"
+    certificate: false
+    deployment_script: |
+      npm ci --production
+      npm run build
+      npm prune --production
+    processes:
+      - name: "node-app"
+        command: "node dist/server.js"
+    environment: |
+      NODE_ENV=production
+      PORT=3000
+      API_KEY=secret_api_key
 
-  - site_domain: "watch.devops.salah-oukil.me"
+  # Site 4: Zero downtime deployments with env file
+  - name: "test-zero-downtime"
+    domain_mode: "custom"
+    www_redirect_type: "from-www"
+    root_dir: "backend"
+    web_dir: "build"
+    zero_downtime_deployments: true
+    certificate: true
+    env_file: "test/.env.example"
+    deployment_script: |
+      npm ci
+      npm run build
+      npm run migrate
+      npm prune --production
+    processes:
+      - name: "api-server"
+        command: "npm start"
+      - name: "worker"
+        command: "npm run worker"
+    aliases:
+      - "zerodowntime.example.com"
+      - "api.zerodowntime.example.com"
+
+  # Site 5: Site with custom nginx config file
+  - name: "test-custom-nginx"
+    domain_mode: "custom"
+    www_redirect_type: "none"
+    nginx_custom_config: "test/sites/api/nginx.conf"
+    root_dir: "frontend"
+    web_dir: "dist"
+    certificate: true
+    deployment_script: |
+      npm ci
+      npm run build:prod
+      npm run optimize
+    environment: |
+      VUE_APP_API_URL=https://api.example.com
+      VUE_APP_ENV=production
+      VUE_APP_VERSION=1.0.0
+    aliases:
+      - "custom.example.com"
+      - "www.custom.example.com"
+
+  # Site 6: Multiple PHP versions and multiple processes
+  - name: "test-multi-process-php83"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
+    project_type: "laravel"
+    php_version: "php83"
+    root_dir: "."
+    web_dir: "public"
+    install_composer_dependencies: true
+    laravel_scheduler: true
+    deployment_script: |
+      composer install --no-dev --optimize-autoloader
+      php artisan migrate --force
+      php artisan db:seed --force
+      php artisan optimize
+    processes:
+      - name: "queue-default"
+        command: "php artisan queue:work --queue=default --sleep=3 --tries=3"
+      - name: "queue-emails"
+        command: "php artisan queue:work --queue=emails --sleep=3 --tries=3"
+      - name: "queue-notifications"
+        command: "php artisan queue:work --queue=notifications --sleep=3 --tries=3"
+      - name: "websocket-server"
+        command: "php artisan websockets:serve"
+      - name: "octane"
+        command: "php artisan octane:start --workers=4 --max-requests=500"
+    environment: |
+      APP_ENV=staging
+      APP_DEBUG=true
+      LOG_LEVEL=debug
+      QUEUE_CONNECTION=database
+
+  # Site 7: Site without repository cloning (manual deployment)
+  - name: "test-no-clone"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
     clone_repository: false
-    nginx_custom_config: "/sites/api/nginx.conf"
-    daemons:
-      - command: "watch -n 20 date"
+    root_dir: "."
+    web_dir: "public"
+    project_type: "other"
+    environment: |
+      MANUAL_DEPLOY=true
+      APP_MODE=manual
+      SKIP_GIT=true
+    processes:
+      - name: "manual-app"
+        command: "node server.js"
+
+  # Site 8: Site with all redirect types and many aliases
+  - name: "test-redirects-aliases"
+    domain_mode: "custom"
+    www_redirect_type: "to-www"
+    root_dir: "."
+    web_dir: "public"
+    certificate: true
+    deployment_script: |
+      echo "Deploying with redirects..."
+      npm ci
+      npm run build
+      echo "Deployment complete"
+    environment: |
+      APP_URL=https://www.test-redirects-aliases.com
+      REDIRECT_MODE=permanent
+    aliases:
+      - "redirect1.example.com"
+      - "redirect2.example.com"
+      - "redirect3.example.com"
+      - "redirect4.example.com"
+      - "www.redirect1.example.com"
+    processes:
+      - name: "redirect-app"
+        command: "node app.js"
+
+  # Site 9: NextJS site with custom nginx template
+  - name: "test-nextjs-app"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
+    root_dir: "nextjs-app"
+    web_dir: "."
+    nginx_template: "nextjs"
+    nginx_template_variables:
+      NEXTJS_PORT: "3001"
+    certificate: false
+    deployment_script: |
+      npm ci
+      npm run build
+    processes:
+      - name: "nextjs-server"
+        command: "npm run start -- -p 3001"
+    environment: |
+      NODE_ENV=production
+      PORT=3001
+      NEXT_TELEMETRY_DISABLED=1
+
+  # Site 10: Isolated Laravel site with zero downtime
+  - name: "test-isolated-laravel-zero"
+    domain_mode: "custom"
+    www_redirect_type: "from-www"
+    project_type: "laravel"
+    php_version: "php84"
+    isolated: true
+    isolated_user: "laraveluser"
+    zero_downtime_deployments: true
+    install_composer_dependencies: true
+    laravel_scheduler: true
+    certificate: true
+    root_dir: "."
+    web_dir: "public"
+    deployment_script: |
+      composer install --no-dev --optimize-autoloader
+      php artisan migrate --force
+      php artisan config:cache
+      php artisan route:cache
+      php artisan view:cache
+      php artisan queue:restart
+    processes:
+      - name: "queue-worker-1"
+        command: "php artisan queue:work"
+      - name: "queue-worker-2"
+        command: "php artisan queue:work"
+    environment: |
+      APP_NAME=IsolatedLaravel
+      APP_ENV=production
+      APP_DEBUG=false
+      DB_CONNECTION=mysql
+      QUEUE_CONNECTION=redis
+    aliases:
+      - "isolated-laravel.com"
+      - "www.isolated-laravel.com"
+
+  # Site 11: Static site with certificate only
+  - name: "test-static-site"
+    domain_mode: "custom"
+    www_redirect_type: "to-www"
+    root_dir: "."
+    web_dir: "dist"
+    project_type: "other"
+    certificate: true
+    deployment_script: |
+      npm ci
+      npm run build
+    environment: |
+      BUILD_ENV=production
+    aliases:
+      - "static.example.com"
+
+  # Site 12: PHP 8.2 site with socketi nginx template
+  - name: "test-php82-socketi"
+    domain_mode: "on-forge"
+    project_type: "laravel"
+    php_version: "php82"
+    nginx_template: "socketi"
+    nginx_template_variables:
+      SOCKETI_PORT: "6001"
+    install_composer_dependencies: true
+    deployment_script: |
+      composer install --optimize-autoloader
+      php artisan config:clear
+    processes:
+      - name: "socketi-server"
+        command: "php artisan socketi:serve"
+    environment: |
+      APP_ENV=local
+      BROADCAST_DRIVER=pusher
+      PUSHER_APP_ID=app-id
+      PUSHER_APP_KEY=app-key
+      PUSHER_APP_SECRET=app-secret

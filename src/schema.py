@@ -76,7 +76,6 @@ schema = {
                 "nginx_template": {
                     "type": "string",
                     "required": False,
-                    "default": "default",
                 },
                 "nginx_template_variables": {
                     "type": "dict",
@@ -106,6 +105,23 @@ schema = {
                     "type": "boolean",
                     "required": False,
                     "default": False,
+                },
+                "shared_paths": {
+                    "type": "list",
+                    "required": False,
+                    "default": [],
+                    "schema": {
+                        "anyof": [
+                            {"type": "string"},
+                            {
+                                "type": "dict",
+                                "schema": {
+                                    "from": {"type": "string", "required": True},
+                                    "to": {"type": "string", "required": True},
+                                },
+                            },
+                        ]
+                    },
                 },
                 "clone_repository": {
                     "type": "boolean",

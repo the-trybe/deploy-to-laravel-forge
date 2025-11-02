@@ -12,7 +12,6 @@ from forge_api import ForgeApi
 from utils import (
     cat_paths,
     format_php_version,
-    get_domains_certificate,
     parse_env,
     replace_nginx_variables,
     replace_secrets_yaml,
@@ -99,14 +98,21 @@ def main():
 
     for site_conf in config["sites"]:
         print("\n")
-        logger.info(f"\t---- Site: {site_conf['name']} ----")
 
-        # TODO: test if the name includes the on forge domain
+        # Compute domain_name based on domain_mode
+        site_conf["domain_name"] = (
+            site_conf["name"]
+            if site_conf["domain_mode"] == "custom"
+            else f"{site_conf['name']}.on-forge.com"
+        )
+
+        logger.info(f"\t---- Site: {site_conf['domain_name']} ----")
+
         existing_site = next(
             (
                 site
                 for site in server_sites
-                if site["attributes"]["name"] == site_conf["name"]
+                if site["attributes"]["name"] == site_conf["domain_name"]
             ),
             None,
         )
@@ -115,17 +121,19 @@ def main():
         if site_conf.get("php_version"):
             # check if version is installed, if not install it
             server_php_versions = forge_api.get_server_installed_php_versions(server_id)
-            if site_conf["php_version"] not in [
-                php["attributes"]["version"] for php in server_php_versions
+            if format_php_version(site_conf.get("php_version")) not in [
+                php["attributes"]["binary_name"] for php in server_php_versions
             ]:
-                logger.info(f"Installing php version {site_conf['php_version']}...")
+                logger.info(f"Installing php version {site_conf.get('php_version')}...")
                 try:
-                    forge_api.install_php_version(server_id, site_conf["php_version"])
+                    forge_api.install_php_version(
+                        server_id, site_conf.get("php_version")
+                    )
 
                     # wait for installation
                     def until_php_installed():
                         installed_php = forge_api.get_php_version(
-                            server_id, site_conf["php_version"]
+                            server_id, site_conf.get("php_version")
                         )
                         if not installed_php:
                             raise Exception("Php version not found after installation")
@@ -136,72 +144,74 @@ def main():
                 except Exception as e:
                     raise Exception(f"Failed to install php version: {e}") from e
 
-                logger.info(f"Php version {site_conf['php_version']} installed")
+                logger.info(f"Php version {site_conf.get('php_version')} installed")
 
         # create site
         if not existing_site:
             # nginx template
 
-            nginx_templates = forge_api.get_nginx_templates_by_name(
-                server_id, site_conf["nginx_template"]
-            )
-            nginx_template_id = nginx_templates.get("id") if nginx_templates else None
-
-            # if template isn't added in the server add it from nginx-templates folder
-            nginx_template_path = cat_paths(
-                action_dir, "nginx_templates/", f"{site_conf['nginx_template']}.conf"
-            )
-            if not nginx_template_id:
-                logger.info("Nginx template not created in the server")
-                logger.info("Creating nginx template...")
-                if os.path.exists(nginx_template_path):
-                    with open(
-                        nginx_template_path,
-                        "r",
-                    ) as file:
-                        nginx_template_id = forge_api.create_nginx_template(
-                            server_id, site_conf["nginx_template"], file.read()
-                        )
-                        logger.info("Nginx template created successfully")
-                else:
-                    raise Exception("Invalid nginx template name")
-            # else update the template if it changed
-            else:
-                server_template = forge_api.get_nginx_template_by_id(
-                    server_id, nginx_template_id
+            nginx_template_id = None
+            if site_conf.get("nginx_template"):
+                nginx_templates = forge_api.get_nginx_templates_by_name(
+                    server_id, site_conf["nginx_template"]
                 )
-                if os.path.exists(nginx_template_path):
-                    with open(
-                        nginx_template_path,
-                        "r",
-                    ) as file:
-                        local_template_content = file.read()
+                nginx_template_id = (
+                    nginx_templates.get("id") if nginx_templates else None
+                )
 
-                    if (
-                        server_template["attributes"]["content"]
-                        != local_template_content
-                    ):
-                        forge_api.update_nginx_template(
-                            server_id, nginx_template_id, local_template_content
-                        )
-                        logger.info("Nginx template updated successfully")
+                # if template isn't added in the server add it from nginx-templates folder
+                if not nginx_template_id:
+                    nginx_template_path = cat_paths(
+                        action_dir,
+                        "nginx_templates/",
+                        f"{site_conf['nginx_template']}.conf",
+                    )
+                    logger.info("Nginx template not created in the server")
+                    logger.info("Creating nginx template...")
+                    if os.path.exists(nginx_template_path):
+                        with open(
+                            nginx_template_path,
+                            "r",
+                        ) as file:
+                            nginx_template_id = forge_api.create_nginx_template(
+                                server_id, site_conf["nginx_template"], file.read()
+                            )
+                            logger.info("Nginx template created successfully")
+                    else:
+                        raise Exception("Invalid nginx template name")
+
+            # Normalize shared paths to have both 'from' and 'to'
+            #TODO: if forge adds a way to update shared paths after site creation implement it
+            shared_paths_normalized = []
+            for path in site_conf["shared_paths"]:
+                if isinstance(path, str):
+                    # String format: use same path for both from and to
+                    shared_paths_normalized.append({"from": path, "to": path})
+                elif isinstance(path, dict):
+                    # Dict format: already has from and to
+                    shared_paths_normalized.append({"from": path["from"], "to": path["to"]})
 
             create_site_payload = {
                 "name": site_conf["name"],
                 "domain_mode": site_conf["domain_mode"],
                 "www_redirect_type": site_conf["www_redirect_type"],
+                "allow_wildcard_subdomains": False,
                 "type": site_conf["project_type"],
                 "web_directory": cat_paths(site_conf["root_dir"], site_conf["web_dir"]),
                 "is_isolated": site_conf["isolated"],
-                "isolated_user": site_conf["isolated_user"],
+                "isolated_user": site_conf.get("isolated_user"),
                 "nginx_template_id": nginx_template_id,
                 "push_to_deploy": False,
                 "php_version": site_conf.get("php_version"),
+                "shared_paths": shared_paths_normalized if len(shared_paths_normalized) > 0 else None,
             }
+
+            create_site_payload = {
+                k: v for k, v in create_site_payload.items() if v is not None
+            }  # Remove None values
 
             # add repository
             if site_conf["clone_repository"]:
-                logger.info("Adding repository...")
 
                 create_site_payload["source_control_provider"] = "github"
                 create_site_payload["repository"] = config["github_repository"]
@@ -217,8 +227,11 @@ def main():
             existing_site = forge_api.create_site(server_id, create_site_payload)
 
             def until_repo_installed():
-                site = forge_api.get_site_by_id(server_id, site_id)
-                return site["attributes"]["repository"]["status"] == "installed"
+                site = forge_api.get_site_by_id(server_id, existing_site["id"])
+                return site["attributes"]["status"] == "installed" and (
+                    not site_conf["clone_repository"]
+                    or site["attributes"]["repository"]["status"] == "installed"
+                )
 
             if site_conf["clone_repository"] and not wait(until_repo_installed):
                 raise Exception("Adding repository timed out")
@@ -246,7 +259,6 @@ def main():
         # ---- update aliases ----
         try:
             # TODO: change aliases to extra_domains (or smtng like that) and add www redirect type option
-            site_aliases = existing_site["aliases"]
             existing_domains = forge_api.get_site_domains(server_id, site_id)
             existing_domains_list = [
                 domain["attributes"]["name"]
@@ -281,9 +293,9 @@ def main():
         # ---- nginx custom config ----
 
         try:
-            if site_conf["nginx_custom_config"]:
+            if site_conf.get("nginx_custom_config"):
                 nginx_custom_file_path = cat_paths(
-                    SOURCE_REPO_PATH, site_conf["nginx_custom_config"]
+                    SOURCE_REPO_PATH, site_conf.get("nginx_custom_config")
                 )
                 with open(nginx_custom_file_path, "r") as file:
                     nginx_custom_content = file.read()
@@ -300,7 +312,7 @@ def main():
                     logger.info(f"Nginx config updated.")
         except FileNotFoundError as e:
             raise Exception(
-                f"Nginx config file `{site_conf["nginx_custom_config"]} doesn't exist."
+                f"Nginx config file `{site_conf.get('nginx_custom_config')} doesn't exist."
             ) from e
         except Exception as e:
             raise Exception("Error when trying to set custom nginx config") from e
@@ -310,27 +322,28 @@ def main():
         try:
             site_php_version = forge_api.get_site_by_id(server_id, site_id)[
                 "attributes"
-            ]["php_version"]
+            ]["php_version"].replace("PHP ", "php").replace(".", "")
+
         except Exception as e:
             raise Exception("Failed to get site php version") from e
 
         if (
             site_conf.get("php_version")
-            and site_conf["php_version"] != site_php_version
+            and site_conf.get("php_version") != site_php_version
         ):
             # update site php version
             logger.debug(
-                f"php version changed from {site_php_version} to {site_conf['php_version']}, updating..."
+                f"php version changed from {site_php_version} to {site_conf.get('php_version')}, updating..."
             )
             forge_api.update_site(
-                server_id, site_id, php_version=site_conf["php_version"]
+                server_id, site_id, php_version=site_conf.get("php_version")
             )
-            logger.info(f"Php version set to {site_conf["php_version"]}")
+            logger.info(f"Php version set to {site_conf.get('php_version')}")
 
-        site_user = site_conf["isolated_user"] if site_conf["isolated"] else "forge"
+        site_user = site_conf.get("isolated_user") if site_conf["isolated"] else "forge"
         site_dir = cat_paths(
             f"/home/{site_user}/",
-            site_conf["name"],
+            site_conf["domain_name"],
             "current" if site_conf["zero_downtime_deployments"] else ".",
             site_conf["root_dir"],
         )
@@ -380,11 +393,9 @@ def main():
         # ----------Scheduler----------
         if site_conf["project_type"] == "laravel":
             try:
-                scheduler_php_version = format_php_version(
-                    forge_api.get_site_by_id(server_id, site_id)["attributes"][
+                scheduler_php_version = forge_api.get_site_by_id(server_id, site_id)["attributes"][
                         "php_version"
-                    ]
-                )
+                    ].replace("PHP", "php").replace(" ","")
 
                 scheduler_cmd = (
                     f"{scheduler_php_version} {site_dir}/artisan schedule:run"
@@ -412,29 +423,33 @@ def main():
 
         # deployment script
         # if deployment_script not provided, the default deployment script generated by forge is kept
-        if site_conf["deployment_script"]:
+        if site_conf.get("deployment_script"):
             deployment_script = f"# Generated by deployment action, do not modify\n"
 
             if not site_conf["zero_downtime_deployments"]:
                 deployment_script += (
                     f"cd {site_dir}\n"
-                    + "git fetch --prune --tags origin"
+                    + "git fetch --prune --tags origin\n"
                     + 'git reset --hard "origin/$FORGE_SITE_BRANCH"\n'
                 )
             else:
-                deployment_script += "$CREATE_RELEASE()\n" + (
-                    f"cd {site_conf["root_dir"]}\n"
-                    if site_conf["root_dir"] != "."
-                    else ""
+                deployment_script += (
+                    "$CREATE_RELEASE()\n"
+                    + "cd $FORGE_RELEASE_DIRECTORY\n"
+                    + (
+                        f"cd {site_conf["root_dir"]}\n"
+                        if site_conf["root_dir"] != "."
+                        else ""
+                    )
                 )
 
-            deployment_script += site_conf["deployment_script"] + "\n"
+            deployment_script += site_conf.get("deployment_script") + "\n"
 
             if site_conf["zero_downtime_deployments"]:
                 deployment_script += "$ACTIVATE_RELEASE()\n"
 
             for d_id in daemon_ids:
-                deployment_script += f"sudo -S supervisorctl restart daemon-{d_id}:*\n"
+                deployment_script += f"sudo supervisorctl restart daemon-{d_id}:*\n"
 
             try:
                 forge_api.update_deployment_script(
@@ -452,13 +467,13 @@ def main():
         try:
             site_env = {}
             # read env file
-            if site_conf["env_file"]:
-                env_file_path = cat_paths(SOURCE_REPO_PATH, site_conf["env_file"])
+            if site_conf.get("env_file"):
+                env_file_path = cat_paths(SOURCE_REPO_PATH, site_conf.get("env_file"))
                 try:
                     with open(env_file_path, "r") as file:
                         logger.info(
                             "Loading environment variables from file `%s`",
-                            site_conf["env_file"],
+                            site_conf.get("env_file"),
                         )
                         env_file_content = file.read()
                         logger.debug("Env file content:\n%s", env_file_content)
@@ -472,11 +487,11 @@ def main():
                         site_env.update(file_env)
                 except FileNotFoundError as e:
                     raise Exception(
-                        f"Environment file `{site_conf['env_file']}` not found"
+                        f"Environment file `{site_conf.get('env_file')}` not found"
                     ) from e
 
-            if site_conf["environment"]:
-                config_env = parse_env(site_conf["environment"])
+            if site_conf.get("environment"):
+                config_env = parse_env(site_conf.get("environment"))
                 site_env.update(config_env)
 
             env_str = "\n".join([f"{k}={v}" for k, v in site_env.items()])
@@ -524,7 +539,7 @@ def main():
                                 server_id, site_id, domain_id
                             )
                             if not domain_cert:
-                                return False
+                                return True # certificate failed
                             return domain_cert["attributes"]["status"] == "installed"
 
                         if not wait(until_cert_installed):
@@ -532,7 +547,13 @@ def main():
                                 f"Certificate installation timed out for domain '{domain_name}'"
                             )
 
-                        logger.info(f"Certificate installed for domain '{domain_name}'")
+                        cert = forge_api.get_domain_certificate(
+                                server_id, site_id, domain_id
+                            )
+                        if cert:
+                            logger.info(f"Certificate installed for domain '{domain_name}'")
+                        else:
+                            raise Exception(f"Certificate installation failed for domain '{domain_name}'")
                     else:
                         logger.info(
                             f"Certificate already exists for domain '{domain_name}'"
@@ -551,7 +572,7 @@ def main():
 
             # Wait until deployment is finished
             def until_deployment_finished():
-                status_data = forge_api.get_deployment_status(
+                status_data = forge_api.get_deployment(
                     server_id, site_id, deployment_id
                 )
                 status = status_data["attributes"]["status"]
@@ -572,7 +593,7 @@ def main():
                 raise Exception("Deployment status check timed out")
 
             # Get final status
-            final_status_data = forge_api.get_deployment_status(
+            final_status_data = forge_api.get_deployment(
                 server_id, site_id, deployment_id
             )
             final_status = final_status_data["attributes"]["status"]
@@ -580,7 +601,7 @@ def main():
             # Get deployment log (always show it)
             deployment_log = forge_api.get_deployment_log(
                 server_id, site_id, deployment_id
-            )
+            )["attributes"]["output"]
             if deployment_log:
                 logger.info("Deployment log:\n%s", deployment_log)
             else:
