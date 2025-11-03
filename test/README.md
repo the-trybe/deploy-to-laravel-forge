@@ -1,9 +1,16 @@
-- to test logic (deploy.py script)
-  create `.env.test` file in `test` with forge api token ex: `FORGE_API_TOKEN=your-token` then:
+- to test the script:
+  create `.env` file in the root folder of the project:
+
+```env
+GITHUB_WORKSPACE=test
+DEPLOYMENT_FILE=forge-deploy.test.yml
+FORGE_API_TOKEN=<your-token>
+```
+
+then run:
 
 ```bash
-cd test
-pytest
+python src/main.py
 ```
 
 - to test action
