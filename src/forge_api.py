@@ -28,9 +28,14 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to get server from Laravel Forge API") from e
         servers = response.json()["data"]
-        if len(servers) == 0:
+        
+        # Filter returns substring matches, so find exact match
+        exact_matches = [s for s in servers if s["attributes"]["name"] == server_name]
+        
+        if len(exact_matches) == 0:
             raise Exception(f"Server '{server_name}' not found in Laravel Forge")
-        return servers[0]
+        
+        return exact_matches[0]
 
     # --- Sites ---
     def create_site(self, server_id, payload):
@@ -155,9 +160,14 @@ class ForgeApi:
             )
             response.raise_for_status()
             templates = response.json()["data"]
-            if len(templates) == 0:
+            
+            # Filter returns substring matches, so find exact match
+            exact_matches = [t for t in templates if t["attributes"]["name"] == name]
+            
+            if len(exact_matches) == 0:
                 return None
-            return templates[0]
+            
+            return exact_matches[0]
         except requests.RequestException as e:
             raise Exception(
                 "Failed to get nginx templates from Laravel Forge API"

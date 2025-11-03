@@ -181,7 +181,7 @@ def main():
                         raise Exception("Invalid nginx template name")
 
             # Normalize shared paths to have both 'from' and 'to'
-            #TODO: if forge adds a way to update shared paths after site creation implement it
+            # TODO: if forge adds a way to update shared paths after site creation implement it
             shared_paths_normalized = []
             for path in site_conf["shared_paths"]:
                 if isinstance(path, str):
@@ -189,7 +189,9 @@ def main():
                     shared_paths_normalized.append({"from": path, "to": path})
                 elif isinstance(path, dict):
                     # Dict format: already has from and to
-                    shared_paths_normalized.append({"from": path["from"], "to": path["to"]})
+                    shared_paths_normalized.append(
+                        {"from": path["from"], "to": path["to"]}
+                    )
 
             create_site_payload = {
                 "name": site_conf["name"],
@@ -203,7 +205,12 @@ def main():
                 "nginx_template_id": nginx_template_id,
                 "push_to_deploy": False,
                 "php_version": site_conf.get("php_version"),
-                "shared_paths": shared_paths_normalized if len(shared_paths_normalized) > 0 else None,
+                "zero_downtime_deployments": site_conf["zero_downtime_deployments"],
+                "shared_paths": (
+                    shared_paths_normalized
+                    if len(shared_paths_normalized) > 0
+                    else None
+                ),
             }
 
             create_site_payload = {
@@ -226,14 +233,14 @@ def main():
             logger.info("Creating site...")
             existing_site = forge_api.create_site(server_id, create_site_payload)
 
-            def until_repo_installed():
+            def until_site_installed():
                 site = forge_api.get_site_by_id(server_id, existing_site["id"])
                 return site["attributes"]["status"] == "installed" and (
                     not site_conf["clone_repository"]
                     or site["attributes"]["repository"]["status"] == "installed"
                 )
 
-            if site_conf["clone_repository"] and not wait(until_repo_installed):
+            if not wait(until_site_installed):
                 raise Exception("Adding repository timed out")
 
             logger.info("Site created successfully")
@@ -320,9 +327,13 @@ def main():
         # ---- php version ----
 
         try:
-            site_php_version = forge_api.get_site_by_id(server_id, site_id)[
-                "attributes"
-            ]["php_version"].replace("PHP ", "php").replace(".", "")
+            site_php_version = (
+                forge_api.get_site_by_id(server_id, site_id)["attributes"][
+                    "php_version"
+                ]
+                .replace("PHP ", "php")
+                .replace(".", "")
+            )
 
         except Exception as e:
             raise Exception("Failed to get site php version") from e
@@ -393,9 +404,13 @@ def main():
         # ----------Scheduler----------
         if site_conf["project_type"] == "laravel":
             try:
-                scheduler_php_version = forge_api.get_site_by_id(server_id, site_id)["attributes"][
+                scheduler_php_version = (
+                    forge_api.get_site_by_id(server_id, site_id)["attributes"][
                         "php_version"
-                    ].replace("PHP", "php").replace(" ","")
+                    ]
+                    .replace("PHP", "php")
+                    .replace(" ", "")
+                )
 
                 scheduler_cmd = (
                     f"{scheduler_php_version} {site_dir}/artisan schedule:run"
@@ -539,7 +554,7 @@ def main():
                                 server_id, site_id, domain_id
                             )
                             if not domain_cert:
-                                return True # certificate failed
+                                return True  # certificate failed
                             return domain_cert["attributes"]["status"] == "installed"
 
                         if not wait(until_cert_installed):
@@ -548,12 +563,16 @@ def main():
                             )
 
                         cert = forge_api.get_domain_certificate(
-                                server_id, site_id, domain_id
-                            )
+                            server_id, site_id, domain_id
+                        )
                         if cert:
-                            logger.info(f"Certificate installed for domain '{domain_name}'")
+                            logger.info(
+                                f"Certificate installed for domain '{domain_name}'"
+                            )
                         else:
-                            raise Exception(f"Certificate installation failed for domain '{domain_name}'")
+                            raise Exception(
+                                f"Certificate installation failed for domain '{domain_name}'"
+                            )
                     else:
                         logger.info(
                             f"Certificate already exists for domain '{domain_name}'"

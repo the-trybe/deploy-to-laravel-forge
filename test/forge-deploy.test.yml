@@ -54,14 +54,11 @@ sites:
     root_dir: "express"
     nginx_template: "reverse-proxy"
     nginx_template_variables:
-      PROXY_PASS_PORT: "3000"
+      PROXY_PORT: "3000"
     certificate: true
     zero_downtime_deployments: true
     deployment_script: |
-      npm ci
-    processes:
-      - name: "node-app"
-        command: "node index.js"
+      npm install
     env_file: ".env.test"
     environment: |
       NODE_ENV=production
