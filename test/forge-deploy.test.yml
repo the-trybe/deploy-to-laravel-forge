@@ -1,6 +1,6 @@
 organization: "infrastructure-brainiac"
 server: "test"
-github_repository: "the-trybe/forge-deployment-scripts"
+github_repository: "the-trybe/deploy-to-laravel-forge"
 github_branch: "test"
 
 sites:

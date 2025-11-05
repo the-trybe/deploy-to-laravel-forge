@@ -14,7 +14,7 @@ from utils import (
     format_php_version,
     parse_env,
     replace_nginx_variables,
-    replace_secrets_yaml,
+    replace_secrets_and_envs_yaml,
     validate_yaml_data,
     wait,
 )
@@ -78,10 +78,10 @@ def main():
     if SECRETS_ENV:
         secrets = parse_env(SECRETS_ENV)
 
-        try:
-            data: dict = replace_secrets_yaml(data, secrets)  # type: ignore
-        except Exception as e:
-            raise Exception(f"Error replacing secrets: {e}") from e
+    try:
+        data: dict = replace_secrets_and_envs_yaml(data, secrets)  # type: ignore
+    except Exception as e:
+        raise Exception(f"Error replacing secrets: {e}") from e
 
     config = validate_yaml_data(data)
 
@@ -493,10 +493,9 @@ def main():
                         env_file_content = file.read()
                         logger.debug("Env file content:\n%s", env_file_content)
                         # replace screts
-                        if secrets:
-                            env_file_content = str(
-                                replace_secrets_yaml(env_file_content, secrets)
-                            )
+                        env_file_content = str(
+                            replace_secrets_and_envs_yaml(env_file_content, secrets)
+                        )
                         # parse env
                         file_env = parse_env(env_file_content)
                         site_env.update(file_env)

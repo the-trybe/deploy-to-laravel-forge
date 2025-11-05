@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from pathlib import Path
@@ -14,24 +15,36 @@ def validate_yaml_data(data):
     return v.document  # type: ignore
 
 
-def replace_secrets_yaml(data, secrets):
+def replace_secrets_and_envs_yaml(data, secrets: dict | None):
     if isinstance(data, dict):
         return {
-            key: replace_secrets_yaml(value, secrets) for key, value in data.items()
+            key: replace_secrets_and_envs_yaml(value, secrets)
+            for key, value in data.items()
         }
     elif isinstance(data, list):
-        return [replace_secrets_yaml(item, secrets) for item in data]
+        return [replace_secrets_and_envs_yaml(item, secrets) for item in data]
     elif isinstance(data, str):
-        # regex matches all occurrences of secrets in the form ${{ secrets.SECRET_VAR }}
-        pattern = re.compile(r"\$\{\{\s*secrets\.(\w+)\s*\}\}")
+        # regex matches secrets in the form ${{ secrets.SECRET_VAR }}
+        secrets_pattern = re.compile(r"\$\{\{\s*secrets\.(\w+)\s*\}\}")
+        # regex matches env vars in the form ${{ env.ENV_VAR }}
+        env_pattern = re.compile(r"\$\{\{\s*env\.(\w+)\s*\}\}")
 
-        def replace_match(match):
+        def replace_secret_match(match):
             secret_name = match.group(1).upper()
-            if secret_name not in secrets:
+            if secrets is None or secret_name not in secrets:
                 raise ValueError(f"Secret '{secret_name}' value is not set.")
             return secrets[secret_name]
 
-        return pattern.sub(replace_match, data)
+        def replace_env_match(match):
+            env_name = match.group(1).upper()
+            if env_name not in os.environ:
+                raise ValueError(f"Environment variable '{env_name}' is not set.")
+            return os.environ[env_name]
+
+        # Replace secrets first, then env vars
+        result = secrets_pattern.sub(replace_secret_match, data)
+        result = env_pattern.sub(replace_env_match, result)
+        return result
     else:
         return data
 
