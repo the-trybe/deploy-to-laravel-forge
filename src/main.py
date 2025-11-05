@@ -355,7 +355,7 @@ def main():
         site_dir = cat_paths(
             f"/home/{site_user}/",
             site_conf["domain_name"],
-            "current" if site_conf["zero_downtime_deployments"] else ".",
+            "current/" if site_conf["zero_downtime_deployments"] else ".",
             site_conf["root_dir"],
         )
 
@@ -368,7 +368,7 @@ def main():
             site_daemons = [
                 daemon
                 for daemon in server_daemons
-                if daemon["attributes"]["directory"] == site_dir
+                if Path(daemon["attributes"]["directory"]).resolve() == Path(site_dir).resolve()
             ]
             # delete daemon if not in the config
             for dm in site_daemons:

@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 import time
@@ -5,6 +6,8 @@ from pathlib import Path
 
 from schema import schema
 from validator import ConfigValidator
+
+logger = logging.getLogger(__name__)
 
 
 def validate_yaml_data(data):
@@ -89,8 +92,8 @@ def parse_env(env: str | None) -> dict[str, str]:
                 key, value = line.split("=", 1)
                 parsed_env[key.strip().upper()] = value.strip()
             except ValueError:
-                print(
-                    f"Error: Could not parse line: '{line}'. Make sure each line has a key and a value separated by '='."
+                logger.warning(
+                    f"Could not parse line: '{line}'. Make sure each line has a key and a value separated by '='."
                 )
     return parsed_env
 
