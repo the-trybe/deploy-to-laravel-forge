@@ -37,7 +37,7 @@ schema = {
                 "project_type": {
                     "type": "string",
                     "required": False,
-                    "default": "other",
+                    "default": "laravel",
                     "allowed": [
                         "laravel",
                         "other",

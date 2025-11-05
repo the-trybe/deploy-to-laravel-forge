@@ -1,189 +1,328 @@
 # Deploy to Laravel Forge GitHub Action
 
-This GitHub Action simplifies site creation, configuration, and deployment using a YAML configuration file.
+A GitHub Action that automates site provisioning, configuration, and deployment on Laravel Forge using a declarative YAML configuration file.
 
-## Key Features
+## Quick Start
 
-- **Version-Controlled Site Configurations:** Manage and track your site configurations in a YAML file within your repository. This ensures that your sites configuration is versioned along with your application code, providing consistency across environments.
-- **Automated Deployment:** Deploy multiple sites to Laravel Forge automatically using github actions.
-- **Customizable Configurations:** Configure all aspects of your Laravel Forge sites, such as environment variables, deployment script, Nginx configurations, PHP versions, daemons, and SSL certificates, directly from the YAML file.
-- **Secret Management:** Securely manage environment variables and secrets via GitHub Secrets or external secret management tools like 1Password. Secrets are easily replaced within the YAML configuration for safe deployment.
-
-## Inputs
-
-- `forge_api_token` (required): Laravel Forge API Token.
-- `deployment_file` (optional): The deployment configuration file (default: `forge-deploy.yml`).
-- `debug` (optional): Enable debug mode in logs (default: `false`).
-- `secrets` (optional): Secrets to replace in the `forge-deploy.yml` file. The value should be a multi-line string with the format `VAR_NAME=VALUE`.
-
-## Usage
-
-To use this action, create a workflow file (e.g., `.github/workflows/deploy.yml`) in your repository with the following content:
+Create a workflow file at `.github/workflows/deploy.yml`:
 
 ```yaml
-name: Deploy to Laravel Forge
+name: Deploy to Forge
 
 on:
   push:
-    branches:
-      - main # Adjust to the branch that should trigger the deployment
+    branches: [main]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout the repository # required
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Deploy to Laravel Forge
-        uses: the-trybe/forge-deployment-scripts@v1
+      - uses: the-trybe/deploy-to-laravel-forge@v2
         with:
           forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
-          deployment_file: forge-deploy.yml # [Optional] The deployment configuration file (default: forge-deploy.yml).
-          debug: false # [Optional] Enable debug mode in logs (default: false).
-          secrets:
-            | # [Optional] Secrets to replace in the forge-deploy.yml file. EX:
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            DB_USER=${{ secrets.DB_USER }}
 ```
 
-your repository should have a `forge-deploy.yml` file in the root of the repo.
+Create a `forge-deploy.yml` file in your repository root:
 
 ```yaml
-# forge-deploy.yml schema
+organization: "your-forge-organization"
+server: "production-server"
+github_repository: "username/repository"
 
-# Server configuration
-server_name: "my-server" # [Required] The name of your Laravel Forge server.
-github_repository: "user/my-repo" # [Required] The GitHub repository for your site (format: user/repo).
-github_branch: "main" # [Optional] The branch to deploy (default: "main").
-
-# Sites Configuration - list of sites to configure and deploy
 sites:
-  - site_domain: "mywebsite.com" # [Required] The primary domain for the site.
-    github_branch: "another-branch" #[Optional] site level branch config, if not set global branch is used.
-    root_dir: "/client" # [Optional] The root directory relative to the repo root (default: "/").
-    web_dir: "/public" # [Optional] The web directory (default: "/public").
-    project_type: "php" # [Optional] The type of the project ("php" for Laravel projects, for other types don't include).
-    php_version: "php81" # [Optional] PHP version to use (if not installed in the server, it will be installed).
-    deployment_commands:
-      | # [Optional] deployment commands to execute during deployment (if not included forge default will be used).
-      composer install --no-interaction --prefer-dist --optimize-autoloader
+  - name: "example"
+    domain_mode: "on-forge" # Creates example.on-forge.com
+    project_type: "laravel"
+    php_version: "php84"
+    deployment_script: |
+      composer install --no-dev
       php artisan migrate --force
-    env_file: ".env" # [Optional] The environment file to use (relative to the root of the repository)
-    environment:
-      | # [Optional] Environment variables, if both env_file and environment are provided, both will be used (environment will have precedence).
-      APP_ENV="production"
-      DB_CONNECTION="mysql"
-      DB_HOST="127.0.0.1"
-      DB_PORT=3306
-      DB_DATABASE="mywebsite_db"
-      DB_USERNAME=${{secrets.DB_USER}} # replacing secrets only works in the yaml file and not in external env files.
-      DB_PASSWORD=${{secrets.DB_PASSWORD}}
-    aliases: # [Optional] Additional domain aliases.
-      - "www.mywebsite.com"
-    nginx_template: "default" # [Optional] Nginx template to use from `nignx_templates` folder (default: "default").
-    nginx_template_variables: # [Optional] Variables to replace in the Nginx template.
-      PROXY_PASS_PORT: 8080
-    nginx_custom_config: "path/to/nginx.conf" # [Optional] Custom Nginx config file relative to the repository root.
-    certificate: true # [Optional] Boolean to enable or disable SSL certificate for this domain (default: false).
-    clone_repository: true # [Optional] Boolean to clone the repository (default: true).
-    laravel_scheduler: true # [Optional] Boolean to enable Laravel scheduler (default: false).
-    daemons: # [Optional] List of daemons or processes to run in the background.
-      - command: "php artisan queue:work"
-      - command: "php artisan schedule:run"
-
-  - site_domain: "myotherwebsite.com"
-    root_dir: "/public_html" # Specify a different root directory.
-    deployment_commands: |
-      npm install
-      npm run build
-    environment: | # Example of a different environment configuration.
-      API_URL="https://api.myotherwebsite.com"
-      FEATURE_FLAG="enabled"
-    nginx_template: "custom_template" # Custom Nginx template from the nginx_templates folder.
-    nginx_template_variables:
-      UPSTREAM_SERVER: "127.0.0.1"
-      UPSTREAM_PORT: 8081
-    certificate: false # SSL certificate disabled for this site.
-    daemons: # Custom daemons for this site.
-      - command: "node server.js"
-
-  - site_domain: "api.mywebsite.com" # Example of an API-specific site.
-    deployment_commands: |
-      npm ci
-      npm run build
     environment: |
-      NODE_ENV="production"
-      API_KEY="12345"
-      DB_CONNECTION="postgres"
-      DB_HOST="localhost"
-      DB_PORT=5432
-      DB_USER="api_user"
-      DB_PASSWORD="apipassword"
-    nginx_template: "reverse-proxy"
-    nginx_template_variables:
-      PROXY_PASS_PORT: 3000
-    certificate: true
-    daemons:
-      - command: "pm2 start dist/server.js --name api-server"
+      APP_ENV=production
+      APP_KEY=${{ secrets.APP_KEY }}
 ```
 
-Additional Configuration Options and Customization:
+## Configuration Reference
 
-1. `root_dir` field: Specify the root directory relative to the repository root for each site.
+### Action Inputs
 
-2. `project_type` field: set to "php" if the project is a Laravel project, otherwise, don't include this field.
+| Input             | Required | Default            | Description                                              |
+| ----------------- | -------- | ------------------ | -------------------------------------------------------- |
+| `forge_api_token` | Yes      | -                  | Laravel Forge API token                                  |
+| `deployment_file` | No       | `forge-deploy.yml` | Path to deployment configuration file                    |
+| `secrets`         | No       | -                  | Secret values to replace in config (format: `KEY=value`) |
+| `debug`           | No       | `false`            | Enable verbose logging                                   |
 
-3. `php_version` field: Specify the PHP version to use (e.g., "php81", "php82"), if the version is not installed on the server it will get installed.
-
-4. `deployment_commands` field: Commands to run during the deployment process. Useful for setting up the environment, building assets, or running migrations.
-
-5. `environment` field: Environment variables specific to each site.
-
-6. `nginx_template` field: Specify a custom Nginx template for each site (see the `nginx_templates` folder). you can add additional templates by creating a file in the `nginx_templates` folder.
-
-7. `nginx_template_variables` field: Variables to replace in the Nginx template. variables should be in the template file as `{{ VARIABLE_NAME }}`, avoid using forge [reserved variables](https://forge.laravel.com/docs/servers/nginx-templates.html#template-variables).
-
-8. `daemons` field: List of processes to run as daemons (e.g., queue workers, Node.js servers).
-
-9. You can add multiple sites in the `sites` array, each with its own configuration. Each site will be configured separately on the Laravel Forge server.
-
-10. You can add secrets to the `forge-deploy.yml` file in the form `${{ secrets.SECRET_VAR }}`. These secrets will be replaced by the values provided in the `secrets` input of the GitHub Action.
-
-## Additional Examples
-
-### Load secrets using One Password
+### Deployment File Schema
 
 ```yaml
-name: Deploy to Laravel Forge
+# Required: Forge organization name
+organization: "string"
 
-on:
-  workflow_dispatch:
+# Required: Forge server name
+server: "string"
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
+# Required: GitHub repository (format: owner/repo)
+github_repository: "string"
 
-    steps:
-      - name: Checkout the repository
-        uses: actions/checkout@v4
+# Optional: Default branch to deploy (default: "main")
+github_branch: "string"
 
-      - name: Load secret
-        uses: 1password/load-secrets-action@v2
-        with:
-          export-env: true
-        env:
-          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
-          DB_USER: op://vault-name/db/user
-          DB_PASSWORD: op://vault-name/db/password
+# Required: List of sites to configure
+sites:
+  - # Required: Site identifier (used to construct domain)
+    name: "string"
 
-      - name: Deploy to Laravel Forge
-        uses: the-trybe/forge-deployment-scripts@main
-        with:
-          forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
-          # in secrets use 'env.' instead of 'secrets.'
-          secrets: |
-            DB_USER=${{ env.DB_USER }}
-            DB_PASSWORD=${{ env.DB_PASSWORD }}
+    # Optional: Domain mode (default: "on-forge")
+    # "on-forge": Creates {name}.on-forge.com
+    # "custom": Uses {name} as the full domain
+    domain_mode: "on-forge|custom"
+
+    # Optional: WWW redirect behavior (default: "none")
+    # "from-www": Redirects www.domain to domain
+    # "to-www": Redirects domain to www.domain
+    # "none": No redirect
+    www_redirect_type: "from-www|to-www|none"
+
+    # Optional: Branch override for this site (default: uses global github_branch)
+    github_branch: "string"
+
+    # Optional: Directory containing the application root (default: ".")
+    root_dir: "string"
+
+    # Optional: Public web directory relative to root_dir (default: "public")
+    web_dir: "string"
+
+    # Optional: Project type (default: "laravel")
+    project_type: "laravel|other"
+
+    # Optional: PHP version (e.g., "php81", "php82", "php83", "php84")
+    # Installs version if not present on server
+    php_version: "string"
+
+    # Optional: Install Composer dependencies during site creation (default: false)
+    install_composer_dependencies: boolean
+
+    # Optional: Custom deployment script
+    # If omitted, uses Forge's default deployment script
+    deployment_script: |
+      # Your deployment commands
+      composer install --no-dev
+      php artisan migrate --force
+
+    # Optional: Background processes to run (default: [])
+    processes:
+      - name: "string" # Process name
+        command: "string" # Command to execute
+
+    # Optional: Enable Laravel scheduler (default: false)
+    # Creates cron job: {php_version} {root_dir}/artisan schedule:run
+    laravel_scheduler: boolean
+
+    # Optional: Environment variables from inline string
+    environment: |
+      KEY=value
+      ANOTHER_KEY=${{ secrets.SECRET_VAR }}
+
+    # Optional: Environment variables from file
+    # File path relative to repository root
+    # If both env_file and environment are set, environment takes precedence
+    env_file: "string"
+
+    # Optional: Additional domain aliases (default: [])
+    aliases:
+      - "www.example.com"
+      - "alias.example.com"
+
+    # Optional: Nginx template name from nginx_templates/ folder
+    # Built-in templates: reverse-proxy
+    nginx_template: "string"
+
+    # Optional: Variables to replace in nginx template (default: {})
+    # Use {{ VARIABLE_NAME }} in template file
+    nginx_template_variables:
+      KEY: "value"
+
+    # Optional: Path to custom nginx configuration file
+    # File path relative to repository root
+    # Overrides template if both are specified
+    nginx_custom_config: "string"
+
+    # Optional: Create SSL certificate for all non-.on-forge.com domains (default: false)
+    certificate: boolean
+
+    # Optional: Run site as isolated user (default: false)
+    isolated: boolean
+
+    # Optional: Isolated user name (required if isolated: true)
+    isolated_user: "string"
+
+    # Optional: Enable zero-downtime deployments (default: false)
+    zero_downtime_deployments: boolean
+
+    # Optional: Shared paths for zero-downtime deployments (default: [])
+    # Paths can be strings or objects with "from" and "to" keys
+    shared_paths:
+      - "storage" # Simple: links same path in shared and release
+      - from: "storage" # Explicit: custom source and destination
+        to: "public/storage"
+
+    # Optional: Clone repository during site creation (default: true)
+    # Set to false for manually deployed sites
+    clone_repository: boolean
+```
+
+## Detailed Guides
+
+### Secret Management
+
+Secrets can be injected using `${{ secrets.NAME }}` or `${{ env.NAME }}` syntax in the deployment file.
+
+**Using GitHub Secrets:**
+
+```yaml
+# .github/workflows/deploy.yml
+- uses: the-trybe/deploy-to-laravel-forge@v2
+  with:
+    forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
+    secrets: |
+      DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+      API_KEY=${{ secrets.API_KEY }}
+```
+
+```yaml
+# forge-deploy.yml
+environment: |
+  DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+  API_KEY=${{ secrets.API_KEY }}
+```
+
+**Using HashiCorp Vault:**
+
+```yaml
+# .github/workflows/deploy.yml
+- uses: hashicorp/vault-action@v2
+  with:
+    url: https://vault.example.com
+    path: jwt-github-actions
+    role: your-jwt-role
+    method: jwt
+    secrets: |
+      secrets/data/your-project/production/env *
+
+- uses: the-trybe/deploy-to-laravel-forge@v2
+  with:
+    forge_api_token: ${{ env.FORGE_API_TOKEN }}
+    deployment_file: forge-deploy.yml
+```
+
+See the [HashiCorp Vault Action documentation](https://github.com/hashicorp/vault-action) for configuration details.
+
+### Nginx Templates
+
+Nginx templates are loaded in the following order:
+
+1. **Existing server templates**: Templates already created in your Forge server
+2. **Built-in community templates**: Templates from the `nginx_templates/` directory of this action (used if not found on server)
+
+The action includes community-contributed templates that can be used directly. Current built-in templates:
+
+- `reverse-proxy`: Basic reverse proxy configuration for Node.js, Go, or other HTTP services
+
+#### Using Templates
+
+Templates support variable substitution using `{{ VARIABLE_NAME }}` syntax.
+
+**Example configuration:**
+
+```yaml
+nginx_template: "reverse-proxy"
+nginx_template_variables:
+  PROXY_PORT: "3000"
+```
+
+**Example template content:**
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:{{ PROXY_PORT }};
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+}
+```
+
+#### Adding Custom Templates
+
+To use a custom template not available on your server:
+
+1. Add your template file to the `nginx_templates/` directory in a fork of this action
+2. Reference it by filename (without `.conf` extension) in your deployment file
+
+**Important:** Avoid using [Forge reserved variables](https://forge.laravel.com/docs/servers/nginx-templates.html#template-variables) in custom templates.
+
+### Zero-Downtime Deployments
+
+Enable zero-downtime deployments to minimize service interruption during updates. Forge creates a new release directory for each deployment and symlinks it to `current` after successful completion.
+
+**Configuration:**
+
+```yaml
+zero_downtime_deployments: true
+shared_paths:
+  - "storage"
+  - "bootstrap/cache"
+  - from: ".env"
+    to: ".env"
+```
+
+**Important:** The `deployment_script` must not include repository cloning commands when zero-downtime is enabled. The action automatically wraps your script with `$CREATE_RELEASE()` and `$ACTIVATE_RELEASE()` commands.
+
+### PHP Version Management
+
+The action automatically installs PHP versions that don't exist on the server. Version format: `php` + major + minor (e.g., `php81`, `php82`, `php84`).
+
+```yaml
+php_version: "php84"
+```
+
+The action waits for installation to complete before proceeding with site creation.
+
+### Isolated Sites
+
+Isolated sites run under a dedicated system user instead of the shared `forge` user. This provides process and filesystem isolation between sites.
+
+```yaml
+isolated: true
+isolated_user: "myappuser"
+```
+
+The `isolated_user` is required when `isolated` is set to `true`.
+
+### Background Processes
+
+Processes are managed by Supervisor. The action automatically restarts processes after deployment when a `deployment_script` is provided.
+
+```yaml
+processes:
+  - name: "queue-worker"
+    command: "php artisan queue:work --tries=3"
+  - name: "websocket-server"
+    command: "php artisan websockets:serve"
+```
+
+### Multiple Sites
+
+Deploy multiple sites to the same server by adding entries to the `sites` array. Each site is configured independently and can use different branches, PHP versions, and configurations.
+
+```yaml
+sites:
+  - name: "production"
+    github_branch: "main"
+    php_version: "php84"
+
+  - name: "staging"
+    github_branch: "develop"
+    php_version: "php83"
 ```
