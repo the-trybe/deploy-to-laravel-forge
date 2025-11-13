@@ -106,6 +106,10 @@ def main():
             else f"{site_conf['name']}.on-forge.com"
         )
 
+        # set site gh branch
+        if not site_conf.get("github_branch"):
+            site_conf["github_branch"] = config["github_branch"]
+
         logger.info(f"\t---- Site: {site_conf['domain_name']} ----")
 
         existing_site = next(
@@ -222,9 +226,7 @@ def main():
 
                 create_site_payload["source_control_provider"] = "github"
                 create_site_payload["repository"] = config["github_repository"]
-                create_site_payload["branch"] = (
-                    site_conf.get("github_branch") or config["github_branch"]
-                )
+                create_site_payload["branch"] = site_conf["github_branch"]
                 create_site_payload["install_composer_dependencies"] = site_conf[
                     "install_composer_dependencies"
                 ]
@@ -259,6 +261,21 @@ def main():
 
         else:
             logger.info("Site already exists")
+            update_payload = {}
+            if (
+                existing_site["attributes"]["repository"]["branch"]
+                != site_conf["github_branch"]
+            ):
+                update_payload["repository_branch"] = site_conf["github_branch"]
+                logger.info("Updating site branch ...")
+
+            if existing_site["attributes"]["quick_deploy"] == True:
+                update_payload["push_to_deploy"] = False
+                logger.info("Disabling quick deploy ...")
+
+            if update_payload:
+                forge_api.update_site(server_id, existing_site["id"], **update_payload)
+                logger.info("Site updated successfully")
 
         site_id = existing_site["id"]
         logger.debug(f"Site: %s", existing_site)
@@ -368,7 +385,8 @@ def main():
             site_daemons = [
                 daemon
                 for daemon in server_daemons
-                if Path(daemon["attributes"]["directory"]).resolve() == Path(site_dir).resolve()
+                if Path(daemon["attributes"]["directory"]).resolve()
+                == Path(site_dir).resolve()
             ]
             # delete daemon if not in the config
             for dm in site_daemons:
@@ -462,6 +480,10 @@ def main():
 
             if site_conf["zero_downtime_deployments"]:
                 deployment_script += "$ACTIVATE_RELEASE()\n"
+                if site_conf["project_type"] == "laravel":
+                    deployment_script += (
+                        f"$RESTART_QUEUES()\n"
+                    )  
 
             for d_id in daemon_ids:
                 deployment_script += f"sudo supervisorctl restart daemon-{d_id}:*\n"

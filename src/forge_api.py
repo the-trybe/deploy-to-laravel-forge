@@ -28,13 +28,13 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to get server from Laravel Forge API") from e
         servers = response.json()["data"]
-        
+
         # Filter returns substring matches, so find exact match
         exact_matches = [s for s in servers if s["attributes"]["name"] == server_name]
-        
+
         if len(exact_matches) == 0:
             raise Exception(f"Server '{server_name}' not found in Laravel Forge")
-        
+
         return exact_matches[0]
 
     # --- Sites ---
@@ -74,7 +74,6 @@ class ForgeApi:
                 json={**kwargs},
             )
             response.raise_for_status()
-            return response.json()["data"]
         except requests.RequestException as e:
             raise Exception("Failed to update site from Laravel Forge API") from e
 
@@ -160,13 +159,13 @@ class ForgeApi:
             )
             response.raise_for_status()
             templates = response.json()["data"]
-            
+
             # Filter returns substring matches, so find exact match
             exact_matches = [t for t in templates if t["attributes"]["name"] == name]
-            
+
             if len(exact_matches) == 0:
                 return None
-            
+
             return exact_matches[0]
         except requests.RequestException as e:
             raise Exception(
@@ -291,12 +290,14 @@ class ForgeApi:
         """Create a LetsEncrypt certificate for a domain."""
         try:
             response = self.session.post(
-                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}/certificate", 
+                f"{self.forge_uri}/servers/{server_id}/sites/{site_id}/domains/{domain_id}/certificate",
                 json={
                     "type": "letsencrypt",
                     "letsencrypt": {
-                        "verification_method": "http-01", "key_type": "ecdsa"}
-                }
+                        "verification_method": "http-01",
+                        "key_type": "ecdsa",
+                    },
+                },
             )
             response.raise_for_status()
             return response.json()["data"]
