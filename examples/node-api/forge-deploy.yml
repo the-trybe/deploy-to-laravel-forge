@@ -1,0 +1,47 @@
+organization: "your-forge-organization"
+server: "production-server"
+github_repository: "username/repository"
+github_branch: "main"
+
+sites:
+  - name: "api.example.com"
+    domain_mode: "custom"
+    project_type: "other"
+    certificate: true
+    deployment_script: |
+      npm ci
+      npm run build
+    processes:
+      - name: "node-api"
+        command: "npm run start:prod"
+    nginx_template: "reverse-proxy"
+    nginx_template_variables:
+      PROXY_PORT: "3000"
+    zero_downtime_deployments: true
+    shared_paths:
+      - uploads
+      - logs
+    environment: |
+      NODE_ENV=production
+      PORT=3000
+
+      # Database
+      DB_HOST=127.0.0.1
+      DB_PORT=5432
+      DB_NAME=api_database
+      DB_USER=forge
+      DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
+
+      # API Keys
+      API_SECRET="${{ secrets.API_SECRET }}"
+      JWT_SECRET="${{ secrets.JWT_SECRET }}"
+
+      # External Services
+      REDIS_URL=redis://127.0.0.1:6379
+      MAIL_SERVICE_URL=https://mail.example.com
+      MAIL_API_KEY="${{ secrets.MAIL_API_KEY }}"
+
+      # Application
+      API_URL=https://api.example.com
+      CORS_ORIGIN=https://example.com
+      LOG_LEVEL=info

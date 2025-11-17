@@ -22,6 +22,8 @@ jobs:
       - uses: the-trybe/deploy-to-laravel-forge@v2
         with:
           forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
+          secrets: |
+            APP_KEY=${{ secrets.APP_KEY }}
 ```
 
 Create a `forge-deploy.yml` file in your repository root:
@@ -199,6 +201,27 @@ environment: |
   API_KEY=${{ secrets.API_KEY }}
 ```
 
+**Using Environment Variables:**
+
+```yaml
+# .github/workflows/deploy.yml
+- name: Set environment variables
+  run: |
+    echo "APP_NAME=my-app-name" >> $GITHUB_ENV
+    echo "APP_DOMAIN=my-app-domain" >> $GITHUB_ENV
+
+- uses: the-trybe/deploy-to-laravel-forge@v2
+  with:
+    forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
+```
+
+```yaml
+# forge-deploy.yml
+environment: |
+  APP_NAME=${{ env.APP_NAME }}
+  APP_DOMAIN=${{ env.APP_DOMAIN }}
+```
+
 **Using HashiCorp Vault:**
 
 ```yaml
@@ -326,3 +349,7 @@ sites:
     github_branch: "develop"
     php_version: "php83"
 ```
+
+## Examples
+
+Some configuration examples are available in the [`examples/`](examples/) directory.
