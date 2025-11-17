@@ -1,38 +1,53 @@
+import logging
+import os
 import re
 import time
 from pathlib import Path
 
-from cerberus import Validator
-
 from schema import schema
+from validator import ConfigValidator
+
+logger = logging.getLogger(__name__)
 
 
 def validate_yaml_data(data):
-    v = Validator(schema, purge_unknown=False)  # type: ignore
+    v = ConfigValidator(schema, purge_unknown=True)  # type: ignore
     v.allow_default_values = True  # type: ignore
     if not v.validate(data, normalize=True):  # type: ignore
         raise Exception(f"YAML data validation failed: {v.errors}")  # type: ignore
     return v.document  # type: ignore
 
 
-def replace_secrets_yaml(data, secrets):
+def replace_secrets_and_envs_yaml(data, secrets: dict | None):
     if isinstance(data, dict):
         return {
-            key: replace_secrets_yaml(value, secrets) for key, value in data.items()
+            key: replace_secrets_and_envs_yaml(value, secrets)
+            for key, value in data.items()
         }
     elif isinstance(data, list):
-        return [replace_secrets_yaml(item, secrets) for item in data]
+        return [replace_secrets_and_envs_yaml(item, secrets) for item in data]
     elif isinstance(data, str):
-        # regex matches all occurrences of secrets in the form ${{ secrets.SECRET_VAR }}
-        pattern = re.compile(r"\$\{\{\s*secrets\.(\w+)\s*\}\}")
+        # regex matches secrets in the form ${{ secrets.SECRET_VAR }}
+        secrets_pattern = re.compile(r"\$\{\{\s*secrets\.(\w+)\s*\}\}")
+        # regex matches env vars in the form ${{ env.ENV_VAR }}
+        env_pattern = re.compile(r"\$\{\{\s*env\.(\w+)\s*\}\}")
 
-        def replace_match(match):
+        def replace_secret_match(match):
             secret_name = match.group(1).upper()
-            if secret_name not in secrets:
+            if secrets is None or secret_name not in secrets:
                 raise ValueError(f"Secret '{secret_name}' value is not set.")
             return secrets[secret_name]
 
-        return pattern.sub(replace_match, data)
+        def replace_env_match(match):
+            env_name = match.group(1).upper()
+            if env_name not in os.environ:
+                raise ValueError(f"Environment variable '{env_name}' is not set.")
+            return os.environ[env_name]
+
+        # Replace secrets first, then env vars
+        result = secrets_pattern.sub(replace_secret_match, data)
+        result = env_pattern.sub(replace_env_match, result)
+        return result
     else:
         return data
 
@@ -67,7 +82,7 @@ def wait(callback, max_retries=8):
     return False
 
 
-def parse_env(env: str | None) -> dict:
+def parse_env(env: str | None) -> dict[str, str]:
     if not env:
         return {}
     parsed_env = {}
@@ -77,8 +92,8 @@ def parse_env(env: str | None) -> dict:
                 key, value = line.split("=", 1)
                 parsed_env[key.strip().upper()] = value.strip()
             except ValueError:
-                print(
-                    f"Error: Could not parse line: '{line}'. Make sure each line has a key and a value separated by '='."
+                logger.warning(
+                    f"Could not parse line: '{line}'. Make sure each line has a key and a value separated by '='."
                 )
     return parsed_env
 
@@ -91,42 +106,6 @@ def ensure_relative_path(path: str | None):
     if path and path.startswith("/"):
         return "." + path
     return path
-
-
-def load_config(yaml_data):
-    # TODO: remove default values, as they are set by the validate_yaml_data function
-    config = {
-        "server_name": yaml_data["server_name"],
-        "github_repository": yaml_data["github_repository"],
-        "github_branch": yaml_data.get("github_branch", "main"),
-        "sites": [],
-    }
-    for site in yaml_data.get("sites", []):
-
-        config["sites"].append(
-            {
-                "site_domain": site["site_domain"],
-                "github_branch": site.get("github_branch"),
-                "root_dir": ensure_relative_path(site.get("root_dir", ".")),
-                "web_dir": ensure_relative_path(site.get("web_dir", "public")),
-                "project_type": site.get("project_type", "html"),
-                "php_version": site.get("php_version"),
-                "deployment_commands": site.get("deployment_commands"),
-                "daemons": site.get("daemons", []),
-                "laravel_scheduler": site.get("laravel_scheduler"),
-                "environment": site.get("environment"),
-                "env_file": ensure_relative_path(site.get("env_file")),
-                "aliases": site.get("aliases", []),
-                "nginx_template": site.get("nginx_template", "default"),
-                "nginx_template_variables": site.get("nginx_template_variables", {}),
-                "nginx_custom_config": ensure_relative_path(
-                    site.get("nginx_custom_config")
-                ),
-                "certificate": site.get("certificate", False),
-                "clone_repository": site.get("clone_repository", True),
-            }
-        )
-    return config
 
 
 def get_domains_certificate(certificates, domains) -> dict | None:
@@ -144,3 +123,15 @@ def format_php_version(php_version: str) -> str:
     """
     match = re.match(r"php(\d)(\d+)", php_version)
     return f"php{match.group(1)}.{match.group(2)}" if match else "php"
+
+
+def format_php_version_for_api(php_version: str) -> str:
+    """
+    Converts a PHP version string to the format expected by the Forge API.
+    Handles formats like '8.4' or 'php8.4' and converts to 'php84'.
+    """
+    # Remove 'php' prefix if present
+    version = php_version.lower().replace("php", "")
+    # Remove dots
+    version = version.replace(".", "")
+    return f"php{version}"

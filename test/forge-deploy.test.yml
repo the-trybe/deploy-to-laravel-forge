@@ -1,28 +1,79 @@
-server_name: "devops-tst"
-github_repository: "the-trybe/forge-deployment-scripts"
-github_branch: "main"
+organization: "infrastructure-brainiac"
+server: "test"
+github_repository: "the-trybe/deploy-to-laravel-forge"
+github_branch: "test"
 
 sites:
-  - site_domain: "api.devops.salah-oukil.me"
-    aliases:
-      - "api1.devops.salah-oukil.me"
-      - "api2.devops.salah-oukil.me"
-    root_dir: "test/sites/api"
-    deployment_commands: |
+  # Site 1: Basic Laravel site
+  - name: "test-laravel"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
+    root_dir: "laravel"
+    web_dir: "public"
+    php_version: "php84"
+    project_type: "laravel"
+    # install_composer_dependencies: true
+    laravel_scheduler: true
+    processes:
+      - name: "queue-worker"
+        command: "php artisan queue:work --tries=3 --timeout=90"
+      - name: "horizon"
+        command: "php artisan horizon"
+
+  # Site 2: Next.js site with custom domain and aliases
+  - name: "next.test.thetrybe.xyz"
+    domain_mode: "custom"
+    www_redirect_type: "to-www"
+    root_dir: "next"
+    web_dir: "public"
+    project_type: "other"
+    certificate: true
+    deployment_script: |
       npm ci
-    env_file: "/sites/api/.env.production"
+      npm run build
+    processes:
+      - name: "next-test"
+        command: "npm start"
     environment: |
-      DB_USERNAME=test-db
-      DB_PASSWORD=test-psswd
+      APP_NAME=TestNext
+      APP_ENV=production
+      DB_HOST=127.0.0.1
+      DB_PORT=3306
+      DB_DATABASE=laravel_db
+      DB_USERNAME=laravel_user
+      DB_PASSWORD=secret_password
+    aliases:
+      - "www.next.test.thetrybe.xyz"
+
+  # Site 3: Isolated site with custom nginx template and variables and zero downtime
+  - name: "express.test.thetrybe.xyz"
+    domain_mode: "custom"
+    www_redirect_type: "none"
+    isolated: true
+    isolated_user: "nodeuser"
+    root_dir: "express"
     nginx_template: "reverse-proxy"
     nginx_template_variables:
-      PROXY_PASS_PORT: "3030"
+      PROXY_PORT: "3000"
     certificate: true
-    daemons:
-      - command: "node index.js"
+    zero_downtime_deployments: true
+    deployment_script: |
+      npm install
+    env_file: ".env.test"
+    environment: |
+      NODE_ENV=production
+      PORT=3000
+      API_KEY=secret_api_key
 
-  - site_domain: "watch.devops.salah-oukil.me"
+  # Site 4: Site without repository cloning (manual deployment)
+  - name: "test-no-clone"
+    domain_mode: "on-forge"
+    www_redirect_type: "none"
     clone_repository: false
-    nginx_custom_config: "/sites/api/nginx.conf"
-    daemons:
-      - command: "watch -n 10 date"
+    project_type: "other"
+    environment: |
+      MANUAL_DEPLOY=true
+      APP_MODE=manual
+    processes:
+      - name: "manual-app"
+        command: "node server.js"
