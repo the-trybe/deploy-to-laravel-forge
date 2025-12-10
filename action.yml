@@ -1,5 +1,5 @@
 name: "Deploy to Laravel Forge"
-description: "Deploy your site using Laravel Forge API"
+description: "Deploy sites to Forge directly from GitHub Actions using a YAML config."
 author: "The Trybe"
 
 inputs:
