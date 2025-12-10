@@ -1,6 +1,9 @@
-name: "Deploy to Laravel Forge"
+name: "Deploy to Laravel Forge Action"
 description: "Deploy sites to Forge directly from GitHub Actions using a YAML config."
 author: "The Trybe"
+branding:
+  icon: "anchor"
+  color: "green"
 
 inputs:
   forge_api_token:
