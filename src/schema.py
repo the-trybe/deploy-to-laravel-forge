@@ -28,11 +28,17 @@ schema = {
                     "type": "string",
                     "required": False,
                 },
-                "root_dir": {"type": "string", "required": False, "default": "."},
+                "root_dir": {
+                    "type": "string",
+                    "required": False,
+                    "default": ".",
+                    "coerce": "relative_path",
+                },
                 "web_dir": {
                     "type": "string",
                     "required": False,
                     "default": "public",
+                    "coerce": "relative_path",
                 },
                 "project_type": {
                     "type": "string",
