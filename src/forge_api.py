@@ -330,13 +330,9 @@ class ForgeApi:
 
     def install_php_version(self, server_id, version):
         try:
-            # Convert version format from '8.4' to 'php84' for the API
-            version_clean = version.replace(".", "")
-            formatted_version = f"php{version_clean}"
-
             response = self.session.post(
-                f"{self.forge_uri}/servers/{server_id}/php",
-                json={"version": formatted_version},
+                f"{self.forge_uri}/servers/{server_id}/php/versions",
+                json={"version": version},
             )
             response.raise_for_status()
         except requests.RequestException as e:
