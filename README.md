@@ -32,6 +32,7 @@ Create a `forge-deploy.yml` file in your repository root:
 organization: "your-forge-organization"
 server: "production-server"
 github_repository: "username/repository"
+github_branch: "main"
 
 sites:
   - name: "example"
@@ -45,6 +46,10 @@ sites:
       APP_ENV=production
       APP_KEY=${{ secrets.APP_KEY }}
 ```
+
+## Examples
+
+Some configuration examples are available in the [`examples/`](examples/) directory.
 
 ## Configuration Reference
 
@@ -349,7 +354,3 @@ sites:
     github_branch: "develop"
     php_version: "php83"
 ```
-
-## Examples
-
-Some configuration examples are available in the [`examples/`](examples/) directory.
