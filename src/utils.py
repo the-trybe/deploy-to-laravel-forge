@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 def validate_yaml_data(data):
     v = ConfigValidator(schema, purge_unknown=True)  # type: ignore
     v.allow_default_values = True  # type: ignore
+    v.allow_unknown = False  # type: ignore
+    
     if not v.validate(data, normalize=True):  # type: ignore
         raise Exception(f"YAML data validation failed: {v.errors}")  # type: ignore
     return v.document  # type: ignore
