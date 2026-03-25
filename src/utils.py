@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 def validate_yaml_data(data):
-    v = ConfigValidator(schema, purge_unknown=True)  # type: ignore
+    v = ConfigValidator(schema)  # type: ignore
     v.allow_default_values = True  # type: ignore
     v.allow_unknown = False  # type: ignore
     
