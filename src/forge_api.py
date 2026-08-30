@@ -50,14 +50,6 @@ class ForgeApi:
         except requests.RequestException as e:
             raise Exception("Failed to create site from Laravel Forge API") from e
 
-    # def get_all_sites(self, server_id):
-    #     try:
-    #         response = self.session.get(f"{self.forge_uri}/servers/{server_id}/sites")
-    #         response.raise_for_status()
-    #         sites = response.json()["data"]
-    #         return sites
-    #     except requests.RequestException as e:
-    #         raise Exception("Failed to get sites from Laravel Forge API") from e
     def get_all_sites(self, server_id):
         sites = []
         url = f"{self.forge_uri}/servers/{server_id}/sites"
@@ -67,7 +59,14 @@ class ForgeApi:
                 response.raise_for_status()
                 body = response.json()
                 sites.extend(body["data"])
-                url = body.get("links", {}).get("next")
+
+                meta = body.get("meta") or {}
+                next_cursor = meta.get("next_cursor")
+                if next_cursor:
+                    links = body.get("links")
+                    url = links.get("next") if isinstance(links, dict) else None
+                else:
+                    url = None
             return sites
         except requests.RequestException as e:
             raise Exception("Failed to get sites from Laravel Forge API") from e
