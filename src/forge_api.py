@@ -1,8 +1,27 @@
 from typing import Literal
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from utils import format_php_version
+
+# Forge occasionally answers a single request with 502/503/504, or 429 when
+# rate-limited. Without retrying, one such blip while polling a deployment
+# fails the whole job even though the deployment itself finishes.
+#
+# Only idempotent methods are retried (urllib3's default: GET, HEAD, PUT,
+# DELETE, OPTIONS, TRACE). POST is never retried, so a deployment, site,
+# domain or certificate is never created twice.
+RETRY_STRATEGY = Retry(
+    total=5,
+    backoff_factor=1,  # waits 0s, 2s, 4s, 8s, 16s between attempts
+    status_forcelist=(429, 502, 503, 504),
+    respect_retry_after_header=True,
+    # After the last attempt, return the response so raise_for_status()
+    # reports the real status instead of a generic RetryError.
+    raise_on_status=False,
+)
 
 
 class ForgeApi:
@@ -10,6 +29,8 @@ class ForgeApi:
         self.forge_uri = f"https://forge.laravel.com/api/orgs/{org}"
 
         self.session = requests.sessions.Session()
+        self.session.mount("https://", HTTPAdapter(max_retries=RETRY_STRATEGY))
+        self.session.mount("http://", HTTPAdapter(max_retries=RETRY_STRATEGY))
         self.session.headers.update(
             {
                 "Authorization": f"Bearer {api_token}",
