@@ -9,12 +9,35 @@ from utils import format_php_version
 # Forge occasionally answers a single request with 502/503/504, or 429 when
 # rate-limited. Without retrying, one such blip while polling a deployment
 # fails the whole job even though the deployment itself finishes.
-#
-# Only idempotent methods are retried (urllib3's default: GET, HEAD, PUT,
-# DELETE, OPTIONS, TRACE). POST is never retried, so a deployment, site,
-# domain or certificate is never created twice.
-RETRY_STRATEGY = Retry(
+MAX_RETRY_AFTER_SECONDS = 60
+
+
+class CappedRetry(Retry):
+    """Honours Retry-After, but never waits longer than MAX_RETRY_AFTER_SECONDS.
+
+    urllib3 sleeps for whatever the header says; a maintenance page answering
+    `Retry-After: 3600` would otherwise stall a deploy for hours.
+    """
+
+    def get_retry_after(self, response):
+        retry_after = super().get_retry_after(response)
+        if retry_after is None:
+            return None
+        return min(retry_after, MAX_RETRY_AFTER_SECONDS)
+
+
+# What is retried, and why it never sends a POST twice:
+# - status 429/502/503/504 and read errors: idempotent methods only (urllib3's
+#   default allowed_methods: GET, HEAD, PUT, DELETE, OPTIONS, TRACE).
+# - connect errors: any method. The connection never opened, so Forge never
+#   received the request and resending a POST is safe.
+# - other errors (e.g. a TLS failure while reading a response): never - Forge
+#   may already have acted on a POST, so a retry could deploy or create twice.
+RETRY_STRATEGY = CappedRetry(
     total=5,
+    connect=5,
+    read=5,
+    other=0,
     backoff_factor=1,  # waits 0s, 2s, 4s, 8s, 16s between attempts
     status_forcelist=(429, 502, 503, 504),
     respect_retry_after_header=True,

@@ -11,6 +11,8 @@ import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from urllib3.exceptions import MaxRetryError, NewConnectionError, SSLError
+
 import forge_api
 from forge_api import ForgeApi
 
@@ -62,6 +64,8 @@ class ForgeApiRetryTest(unittest.TestCase):
         FakeForge.hits = []
         FakeForge.headers_by_status = {}
         self.api = ForgeApi("token", "org")
+        # Ignore HTTP(S)_PROXY on a CI runner: the fake server is local.
+        self.api.session.trust_env = False
         self.api.forge_uri = f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def test_a_502_while_polling_a_deployment_is_retried(self):
@@ -119,6 +123,37 @@ class ForgeApiRetryTest(unittest.TestCase):
             self.api.get_deployment(1, 2, 3)
 
         self.assertEqual(1, len(FakeForge.hits))
+
+
+class RetryRulesTest(unittest.TestCase):
+    """Errors a fake server cannot easily produce, checked on the rules directly."""
+
+    def test_a_tls_error_on_a_post_is_not_retried(self):
+        # Forge may already have queued the deployment when the TLS error hits.
+        with self.assertRaises(MaxRetryError):
+            forge_api.RETRY_STRATEGY.increment(method="POST", url="/deployments", error=SSLError("bad record mac"))
+
+    def test_a_long_retry_after_is_capped(self):
+        # A maintenance page answering "Retry-After: 3600" must not stall a deploy for hours.
+        strategy = forge_api.RETRY_STRATEGY
+
+        self.assertEqual(forge_api.MAX_RETRY_AFTER_SECONDS, strategy.get_retry_after(_Headers({"Retry-After": "3600"})))
+        self.assertEqual(3, strategy.get_retry_after(_Headers({"Retry-After": "3"})))
+        self.assertIsNone(strategy.get_retry_after(_Headers({})))
+
+    def test_a_connect_error_on_a_post_is_retried_because_nothing_was_sent(self):
+        retried = forge_api.RETRY_STRATEGY.increment(
+            method="POST", url="/deployments", error=NewConnectionError(None, "refused")
+        )
+
+        self.assertEqual(4, retried.total)
+
+
+class _Headers:
+    """The slice of an HTTP response that Retry.get_retry_after reads."""
+
+    def __init__(self, headers):
+        self.headers = headers
 
 
 if __name__ == "__main__":
