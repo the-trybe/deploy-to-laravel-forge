@@ -8,10 +8,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout the repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Deploy to Laravel Forge
-        uses: the-trybe/forge-deployment-scripts@main
+        uses: the-trybe/deploy-to-laravel-forge@main
         with:
           forge_api_token: ${{ secrets.FORGE_API_TOKEN }}
           deployment_file: forge-deploy.test.yml
