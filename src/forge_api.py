@@ -2,8 +2,6 @@ from typing import Literal
 
 import requests
 
-from utils import format_php_version
-
 
 class ForgeApi:
     def __init__(self, api_token, org):
